@@ -61,7 +61,6 @@ public class TripGenerator_WebAPI_refactor {
 
 	private final SSLContext sslContext;
 	private final PoolingHttpClientConnectionManager connManager;
-	private final org.apache.http.client.CookieStore cookieStore;
 	private final CloseableHttpClient httpClient;
 	private volatile String sessionId;
 	private volatile String sessionCookieHeader;
@@ -147,7 +146,6 @@ public class TripGenerator_WebAPI_refactor {
 				prop.getProperty("api.sessionRefreshMinutes", "15")) * 60 * 1000);
 		this.sslContext = createSSLContext();
 		this.connManager = createConnManager();
-		this.cookieStore = new org.apache.http.impl.client.BasicCookieStore();
 		this.httpClient = createHttpClient();
 		this.sessionId = createSession();
 		this.sessionCreatedAt = System.currentTimeMillis();
@@ -192,9 +190,8 @@ public class TripGenerator_WebAPI_refactor {
 				.setSSLContext(this.sslContext)
 				.setSSLHostnameVerifier(NoopHostnameVerifier.INSTANCE)
 				.setConnectionManager(this.connManager)
-				.setDefaultCookieStore(this.cookieStore)
 				.setDefaultRequestConfig(RequestConfig.custom()
-						.setCookieSpec(CookieSpecs.STANDARD)
+						.setCookieSpec(CookieSpecs.IGNORE_COOKIES)
 						.build())
 				.build();
 	}
@@ -224,14 +221,6 @@ public class TripGenerator_WebAPI_refactor {
 		sessionParams.add(new BasicNameValuePair("Password", apiPass));
 		createSessionPost.setEntity(new UrlEncodedFormEntity(sessionParams));
 
-		// Clear stale cookies so the server creates a truly new session
-		// (otherwise old JSESSIONID may cause the server to reattach to an
-		// expired session, returning the same dead session ID).
-		if (!this.cookieStore.getCookies().isEmpty()) {
-			System.out.println("[session] Clearing " + this.cookieStore.getCookies().size()
-				+ " stale cookies before CreateSession");
-			this.cookieStore.clear();
-		}
 		System.out.println("[session] CreateSession → " + createSessionURL);
 		HttpResponse sessionResponse = executePostRequest(this.httpClient, createSessionPost);
 		int httpStatus = sessionResponse.getStatusLine().getStatusCode();

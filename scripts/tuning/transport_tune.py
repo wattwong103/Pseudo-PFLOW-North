@@ -302,7 +302,7 @@ def run_trip_generator(pref_code, config_id, config_path, mfactor, stage_dir, ta
     print(f"[trip:{config_id}] Sampled activity: {n_written} persons ({details})")
 
     cmd = [
-        MVN, "-q", "exec:java",
+        MVN, "-q", "-e", "exec:java",
         f"-Dexec.mainClass=pseudo.gen.TripGenerator_WebAPI_refactor",
         f"-Dexec.args={pref_code} {mfactor}",
         f"-Dconfig.file={config_path}",
@@ -324,6 +324,14 @@ def run_trip_generator(pref_code, config_id, config_path, mfactor, stage_dir, ta
 
     if result.returncode != 0:
         print(f"[trip:{config_id}] FAILED (exit {result.returncode}, {elapsed:.0f}s). See {log_file}")
+        # Print last 20 lines of the log for immediate diagnosis
+        try:
+            lines = log_file.read_text().splitlines()
+            tail = lines[-20:] if len(lines) > 20 else lines
+            for line in tail:
+                print(f"  | {line}")
+        except Exception:
+            pass
         return False
 
     print(f"[trip:{config_id}] Done ({elapsed:.0f}s). Log: {log_file}")

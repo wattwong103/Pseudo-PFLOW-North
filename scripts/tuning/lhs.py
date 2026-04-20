@@ -126,6 +126,7 @@ def write_config(filepath, params, output_dir=None):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "w") as f:
         f.write(f"# Generated tuning config: {os.path.basename(filepath)}\n")
+        f.write(f"paramGroup.enabled=false\n")
         if output_dir:
             # Java Properties treats '\' as an escape character, so raw
             # Windows paths get mangled on load. Always serialize paths

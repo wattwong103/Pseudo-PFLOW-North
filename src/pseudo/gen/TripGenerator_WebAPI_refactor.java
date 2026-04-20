@@ -64,6 +64,7 @@ public class TripGenerator_WebAPI_refactor {
 	private final org.apache.http.client.CookieStore cookieStore;
 	private final CloseableHttpClient httpClient;
 	private volatile String sessionId;
+	private volatile String sessionCookieHeader;
 	private volatile long sessionCreatedAt;
 	private final long sessionRefreshIntervalMs;
 
@@ -237,13 +238,23 @@ public class TripGenerator_WebAPI_refactor {
 		if (httpStatus == 200) {
 			String sessionResponseBody = EntityUtils.toString(sessionResponse.getEntity());
 			System.out.println("[session] Response body: " + sessionResponseBody.trim());
-			// Log Set-Cookie headers (may interfere with manual cookie passing)
+			// Build explicit Cookie header from all Set-Cookie responses.
+			// The cookie jar cannot be relied on when the relay is HTTP-only:
+			// if the backend sets Secure on its cookies, a compliant jar will
+			// refuse to replay them over http://.
 			org.apache.http.Header[] setCookies = sessionResponse.getHeaders("Set-Cookie");
-			if (setCookies.length > 0) {
-				for (org.apache.http.Header h : setCookies) {
-					System.out.println("[session] Server Set-Cookie: " + h.getValue());
-				}
+			StringBuilder cookieParts = new StringBuilder();
+			for (org.apache.http.Header h : setCookies) {
+				String val = h.getValue();
+				// Extract "name=value" (everything before the first ";")
+				String nameValue = val.contains(";") ? val.substring(0, val.indexOf(';')).trim() : val.trim();
+				System.out.println("[session] Server Set-Cookie: " + val);
+				if (cookieParts.length() > 0) cookieParts.append("; ");
+				cookieParts.append(nameValue);
 			}
+			this.sessionCookieHeader = cookieParts.toString();
+			System.out.println("[session] Cookie header for subsequent calls: " + this.sessionCookieHeader);
+
 			String[] parts = sessionResponseBody.split(",");
 			String sessionId = (parts.length > 1 ? parts[1] : parts[0]).trim().replace("\r", "").replace("\n", "");
 			if (sessionId.isEmpty()) {
@@ -426,12 +437,12 @@ public class TripGenerator_WebAPI_refactor {
 						long t0 = System.currentTimeMillis();
 						// Proactive refresh: get a session that hasn't expired yet
 						String sid = getValidSession();
-						candidates = getMixedRoutes(httpClient, sid, mixedparams);
+						candidates = getMixedRoutes(httpClient, sid, sessionCookieHeader, mixedparams);
 
 						// null = non-200 HTTP → session likely expired → refresh + retry once
 						if (candidates == null) {
 							String freshSid = refreshSession("HTTP non-200 on getMixedRoutes");
-							candidates = getMixedRoutes(httpClient, freshSid, mixedparams);
+							candidates = getMixedRoutes(httpClient, freshSid, sessionCookieHeader, mixedparams);
 							if (candidates != null) {
 								sessionRetrySuccessCount.incrementAndGet();
 							} else {
@@ -1013,7 +1024,7 @@ public class TripGenerator_WebAPI_refactor {
 	 */
 	private static final AtomicInteger mixedRouteCallCount = new AtomicInteger();
 
-	private static List<JsonNode> getMixedRoutes(CloseableHttpClient httpClient, String sessionid, Map<String, String> params) {
+	private static List<JsonNode> getMixedRoutes(CloseableHttpClient httpClient, String sessionid, String cookieHeader, Map<String, String> params) {
 		String mixedRouteURL = prop.getProperty("api.getMixedRouteURL");
 		if (mixedRouteURL == null) {
 			throw new IllegalStateException("Missing config key: api.getMixedRouteURL");
@@ -1034,10 +1045,10 @@ public class TripGenerator_WebAPI_refactor {
 		} catch (UnsupportedEncodingException e) {
 			throw new RuntimeException(e);
 		}
-		// Let HttpClient's cookie jar send all cookies from CreateSession
-		// (WebApiSessionID + JSESSIONID + WebApiResearchID).
-		// Do NOT use setHeader("Cookie", ...) — it overwrites the jar and
-		// drops JSESSIONID, which the backend needs for session affinity.
+		// Set all session cookies explicitly. The cookie jar alone is
+		// unreliable when the relay is HTTP-only and the backend sets
+		// Secure cookies — a compliant jar won't replay them over http://.
+		mixedRoutePost.setHeader("Cookie", cookieHeader);
 
 		HttpResponse mixedRouteResponse;
 		try {
@@ -1103,7 +1114,7 @@ public class TripGenerator_WebAPI_refactor {
 		return candidates;
 	}
 
-	private static JsonNode getRoadRoute(CloseableHttpClient httpClient, String sessionid, Map<String, String> params) throws Exception {
+	private static JsonNode getRoadRoute(CloseableHttpClient httpClient, String sessionid, String cookieHeader, Map<String, String> params) throws Exception {
 		String roadRouteURL = prop.getProperty("api.getRoadRouteURL");
 		if (roadRouteURL == null) {
 			throw new IllegalStateException("Missing config key: api.getRoadRouteURL");
@@ -1116,6 +1127,7 @@ public class TripGenerator_WebAPI_refactor {
 		}
 
 		roadRoutePost.setEntity(new UrlEncodedFormEntity(roadRouteParams));
+		roadRoutePost.setHeader("Cookie", cookieHeader);
 
 		HttpResponse roadRouteResponse = executePostRequest(httpClient, roadRoutePost);
 		ObjectMapper mapper = new ObjectMapper();

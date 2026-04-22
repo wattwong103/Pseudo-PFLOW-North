@@ -36,12 +36,13 @@ public abstract class AbstractActivityGenerator {
 	protected Country japan;
 	protected MNLParamAccessor mnlAcs;
 	protected Map<EMarkov,Map<EGender,MkChainAccessor>> mrkAcsMap;
-	
+	protected Properties prop;
+
 	protected static final Dijkstra routing = new Dijkstra();
-	
+
 	protected final long TRAIN_SERVICE_START_TIME;
 	protected final int timeInterval;
-	
+
 	protected final int MAX_SEARCH_DISTANDE;
 
 	
@@ -58,6 +59,7 @@ public abstract class AbstractActivityGenerator {
 		this.japan = japan;
 		this.mnlAcs = mnlAcs;
 		this.mrkAcsMap = mrkAcsMap;
+		this.prop = prop;
 		this.TRAIN_SERVICE_START_TIME = prop != null
 				? Long.parseLong(prop.getProperty("train.service.start", "18000")) : 18000L;
 		this.timeInterval = prop != null
@@ -420,8 +422,11 @@ public abstract class AbstractActivityGenerator {
 	
 	public int assign(List<HouseHold> household) {
 		// prepare thread processing
-		int numThreads = Runtime.getRuntime().availableProcessors();
-		System.out.println("NumOfThreads:" + numThreads);
+		int availableCores = Runtime.getRuntime().availableProcessors();
+		int numThreads = (prop != null)
+			? Integer.parseInt(prop.getProperty("numThreads", String.valueOf(availableCores)))
+			: availableCores;
+		System.out.println("NumOfThreads:" + numThreads + " (available cores: " + availableCores + ")");
 		
 		List<Callable<Integer> > listTasks = new ArrayList<>();
 		int listSize = household.size();

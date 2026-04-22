@@ -968,8 +968,10 @@ public class TripGenerator_WebAPI_refactor {
 	
 	public void generate(List<Person> agents) {
 		// prepare thread processing
-		int numThreads = Runtime.getRuntime().availableProcessors();
-		System.out.println("NumOfThreads:" + numThreads);
+		int availableCores = Runtime.getRuntime().availableProcessors();
+		int numThreads = Integer.parseInt(prop.getProperty("numThreads",
+			String.valueOf(availableCores)));
+		System.out.println("NumOfThreads:" + numThreads + " (available cores: " + availableCores + ")");
 		
 		List<Callable<Integer> > listTasks = new ArrayList<>();
 		int listSize = agents.size();

@@ -27,7 +27,9 @@ param(
 
     [string]$OutputRoot,
 
-    [string]$ConfigFile
+    [string]$ConfigFile,
+
+    [int]$NumThreads = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,10 +76,17 @@ if ($ConfigFile) {
     $EffectiveConfig = $MergedConfig
 }
 
+# Build optional JVM flags
+$JvmFlags = @()
+if ($NumThreads -gt 0) {
+    $JvmFlags += "-DnumThreads=$NumThreads"
+}
+
 $SamplePct = [math]::Round(100 / $MFactor, 1)
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host " Staging run: prefecture $PrefCode" -ForegroundColor Cyan
 Write-Host " mfactor=$MFactor ($SamplePct% sample)" -ForegroundColor Cyan
+if ($NumThreads -gt 0) { Write-Host " numThreads=$NumThreads" -ForegroundColor Cyan }
 Write-Host " Output: $OutputRoot" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""
@@ -91,7 +100,7 @@ $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 Push-Location $ProjectDir
 try {
     $ErrorActionPreference = "Continue"
-    & mvn -q exec:java `
+    & mvn -q exec:java @JvmFlags `
         "-Dexec.mainClass=pseudo.gen.ActivityGenerator" `
         "-Dexec.args=$PrefCode $MFactor" `
         "-Dconfig.file=$EffectiveConfig" 2>&1 | Tee-Object -FilePath (Join-Path $LogDir "activity.log")
@@ -118,7 +127,7 @@ $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 Push-Location $ProjectDir
 try {
     $ErrorActionPreference = "Continue"
-    & mvn -q exec:java `
+    & mvn -q exec:java @JvmFlags `
         "-Dexec.mainClass=pseudo.gen.TripGenerator_WebAPI_refactor" `
         "-Dexec.args=$PrefCode $MFactor" `
         "-Dconfig.file=$EffectiveConfig" 2>&1 | Tee-Object -FilePath (Join-Path $LogDir "trip.log")

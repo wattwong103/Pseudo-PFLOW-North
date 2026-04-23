@@ -423,9 +423,11 @@ public abstract class AbstractActivityGenerator {
 	public int assign(List<HouseHold> household) {
 		// prepare thread processing
 		int availableCores = Runtime.getRuntime().availableProcessors();
-		int numThreads = (prop != null)
-			? Integer.parseInt(prop.getProperty("numThreads", String.valueOf(availableCores)))
-			: availableCores;
+		// Check JVM system property first (-DnumThreads=8), then config, then default
+		String defaultVal = (prop != null)
+			? prop.getProperty("numThreads", String.valueOf(availableCores))
+			: String.valueOf(availableCores);
+		int numThreads = Integer.parseInt(System.getProperty("numThreads", defaultVal));
 		System.out.println("NumOfThreads:" + numThreads + " (available cores: " + availableCores + ")");
 		
 		List<Callable<Integer> > listTasks = new ArrayList<>();

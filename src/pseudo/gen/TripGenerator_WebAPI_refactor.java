@@ -103,9 +103,12 @@ public class TripGenerator_WebAPI_refactor {
 	private final AtomicInteger precheckPassCount = new AtomicInteger();
 
 	// Feature B: GetMixedRoute response cache
+	// Configurable via routeCache.maxEntries (default 10000, 0 = disabled)
 	private final ConcurrentHashMap<String, List<JsonNode>> routeCache = new ConcurrentHashMap<>();
+	private final int routeCacheMaxEntries;
 	private final AtomicInteger cacheHitCount = new AtomicInteger();
 	private final AtomicInteger cacheMissCount = new AtomicInteger();
+	private final AtomicInteger cacheEvictCount = new AtomicInteger();
 	private final AtomicLong cacheSavedMs = new AtomicLong();
 
 	// Session lifecycle diagnostics
@@ -142,6 +145,9 @@ public class TripGenerator_WebAPI_refactor {
 		this.transferPenalty = Double.parseDouble(prop.getProperty("api.transit.transferPenalty", "0"));
 		this.transitStops = transitStops;
 		this.precheckRadius = Double.parseDouble(maxRadius);
+		this.routeCacheMaxEntries = Integer.parseInt(
+			System.getProperty("routeCache.maxEntries",
+				prop.getProperty("routeCache.maxEntries", "10000")));
 		this.sessionRefreshIntervalMs = (long) (Double.parseDouble(
 				prop.getProperty("api.sessionRefreshMinutes", "15")) * 60 * 1000);
 		this.sslContext = createSSLContext();
@@ -416,9 +422,9 @@ public class TripGenerator_WebAPI_refactor {
 				if (transitReachable) {
 					mixedQueryCount.incrementAndGet();
 
-					// Feature B: Response cache
-					String cacheKey = buildCacheKey(mixedparams);
-					List<JsonNode> candidates = routeCache.get(cacheKey);
+					// Feature B: Response cache (disabled when routeCache.maxEntries=0)
+					String cacheKey = (routeCacheMaxEntries > 0) ? buildCacheKey(mixedparams) : null;
+					List<JsonNode> candidates = (cacheKey != null) ? routeCache.get(cacheKey) : null;
 					if (candidates != null) {
 						cacheHitCount.incrementAndGet();
 					} else {
@@ -442,7 +448,16 @@ public class TripGenerator_WebAPI_refactor {
 							}
 						}
 						cacheSavedMs.addAndGet(System.currentTimeMillis() - t0);
-						routeCache.put(cacheKey, candidates);
+						if (routeCacheMaxEntries > 0) {
+							if (routeCache.size() >= routeCacheMaxEntries) {
+								// Simple eviction: clear the entire cache when full.
+								// LRU would be more efficient but adds complexity;
+								// a full clear is safe and simple.
+								routeCache.clear();
+								cacheEvictCount.incrementAndGet();
+							}
+							routeCache.put(cacheKey, candidates);
+						}
 					}
 
 					mixedResultsHolder[0] = selectBestTransitCandidate(candidates);
@@ -1176,6 +1191,17 @@ public class TripGenerator_WebAPI_refactor {
 		System.out.println("  getMixedRoute = " + prop.getProperty("api.getMixedRouteURL", "(NOT SET)"));
 		System.out.println("  getRoadRoute  = " + prop.getProperty("api.getRoadRouteURL", "(NOT SET)"));
 
+		System.out.println("Memory/batch config:");
+		System.out.println("  batchSize = " + System.getProperty("batchSize",
+			prop.getProperty("batchSize", "10000")));
+		System.out.println("  routeCache.maxEntries = " + System.getProperty("routeCache.maxEntries",
+			prop.getProperty("routeCache.maxEntries", "10000"))
+			+ " (0 = disabled)");
+		Runtime rtStartup = Runtime.getRuntime();
+		System.out.printf("  heap: %dMB used / %dMB max%n",
+			(rtStartup.totalMemory() - rtStartup.freeMemory()) / (1024 * 1024),
+			rtStartup.maxMemory() / (1024 * 1024));
+
 		// Consistency check: all three URLs must use the same host
 		try {
 			String csHost = new java.net.URI(prop.getProperty("api.createSessionURL")).getHost();
@@ -1369,6 +1395,9 @@ public class TripGenerator_WebAPI_refactor {
 				prop = savedProp;
 
 				int cityCount = 0;
+				int batchSize = Integer.parseInt(System.getProperty("batchSize",
+					prop.getProperty("batchSize", "10000")));
+
 				for (File file : groupFiles) {
 					if (!file.getName().contains(".csv")) continue;
 					String cityCode = extractCityCode(file.getName());
@@ -1377,17 +1406,45 @@ public class TripGenerator_WebAPI_refactor {
 
 					long starttime = System.currentTimeMillis();
 					List<Person> agents = PersonAccessor.loadActivity(file.getAbsolutePath(), loadScale, carRatio, bikeRatio);
-					System.out.printf("[city %s, group %s] %s (%d persons)%n",
-						cityCode, groupKey, file.getName(), agents.size());
-					worker.generate(agents);
-					PersonAccessor.writeTrips(tripFileName, agents);
-					PersonAccessor.writeTrajectory(trajectoryFileName, agents);
+					int totalPersons = agents.size();
+					System.out.printf("[city %s, group %s] %s (%d persons, batchSize=%d)%n",
+						cityCode, groupKey, file.getName(), totalPersons, batchSize);
 
-					// Release person data after writing — trips + trajectory
-					// can be multi-MB per person and must not accumulate across cities
+					// Process in batches to limit within-city memory:
+					// generate() adds trips + trajectory to each person (~50KB/person),
+					// so 800K persons × 50KB = 40GB if held in memory simultaneously.
+					// Batching keeps peak memory at batchSize × 50KB + cache.
+					int processed = 0;
+					while (processed < totalPersons) {
+						int batchEnd = Math.min(processed + batchSize, totalPersons);
+						List<Person> batch = agents.subList(processed, batchEnd);
+
+						worker.generate(batch);
+
+						// Append results to output files (first batch creates, rest append)
+						boolean append = (processed > 0);
+						PersonAccessor.writeTrips(tripFileName, batch, append);
+						PersonAccessor.writeTrajectory(trajectoryFileName, batch, append);
+
+						// Release trip + trajectory data immediately after writing
+						for (Person p : batch) {
+							p.listTrips().clear();
+							p.clearTrajectory();
+						}
+
+						processed = batchEnd;
+						if (totalPersons > batchSize) {
+							Runtime rt = Runtime.getRuntime();
+							System.out.printf("  [batch %d/%d persons] [heap: %dMB used / %dMB max, cache: %d]%n",
+								processed, totalPersons,
+								(rt.totalMemory() - rt.freeMemory()) / (1024 * 1024),
+								rt.maxMemory() / (1024 * 1024),
+								worker.routeCache.size());
+						}
+					}
+
+					// Clear activity data (only needed during generate, not for output)
 					for (Person p : agents) {
-						p.listTrips().clear();
-						p.clearTrajectory();
 						p.clearActivity();
 					}
 					agents.clear();
@@ -1452,7 +1509,8 @@ public class TripGenerator_WebAPI_refactor {
 		System.out.println("  --- Cache ---");
 		System.out.println("  Cache hits: " + worker.cacheHitCount.get());
 		System.out.println("  Cache misses (actual API calls): " + worker.cacheMissCount.get());
-		System.out.println("  Cache entries: " + worker.routeCache.size());
+		System.out.println("  Cache entries: " + worker.routeCache.size()
+			+ " (max: " + worker.routeCacheMaxEntries + ", evictions: " + worker.cacheEvictCount.get() + ")");
 		if (worker.cacheHitCount.get() + worker.cacheMissCount.get() > 0) {
 			System.out.printf("  Cache hit rate: %.1f%%%n",
 				100.0 * worker.cacheHitCount.get() / (worker.cacheHitCount.get() + worker.cacheMissCount.get()));

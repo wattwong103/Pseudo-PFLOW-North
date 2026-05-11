@@ -184,7 +184,11 @@ public class PersonAccessor{
 	}
 	
 	public static void writeTrips(String filename, List<Person> data) {
-		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename));){
+		writeTrips(filename, data, false);
+	}
+
+	public static void writeTrips(String filename, List<Person> data, boolean append) {
+		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename, append));){
 			for (Person p : data) {
 				List<Trip> trips = p.listTrips();
 				for (int i = 0; i < trips.size(); i++) {
@@ -204,7 +208,7 @@ public class PersonAccessor{
 								trip.getSubtripId(),
 								trip.getRepMode().getId()
 							));
-					bw.newLine();	
+					bw.newLine();
 				}
 			}
 		} catch (Exception e) {
@@ -299,12 +303,13 @@ public class PersonAccessor{
 	}
 
 	public static int writeTrajectory(String filename, List<Person> persons) {
-		SimpleDateFormat sfd = new SimpleDateFormat(DATE_FORMAT);
-		// TimeZone tzn = TimeZone.getTimeZone("Europe/London");
-		// TimeZone tzn = TimeZone.getTimeZone("Asia/Tokyo");
-		// sfd.setTimeZone(tzn);
+		return writeTrajectory(filename, persons, false);
+	}
 
-		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename));){
+	public static int writeTrajectory(String filename, List<Person> persons, boolean append) {
+		SimpleDateFormat sfd = new SimpleDateFormat(DATE_FORMAT);
+
+		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename, append));){
 			for (Person person : persons) {
 				List<SPoint> points = person.getTrajectory();
 				if (points != null) {

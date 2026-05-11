@@ -14,16 +14,16 @@
 .PARAMETER ConfigFile
     Optional external config file path.
 .PARAMETER NumThreads
-    Max concurrent threads. Default: all CPU cores.
+    Max concurrent threads. Default: 4.
 .PARAMETER BatchSize
-    Persons per processing batch. Default: 10000.
+    Persons per processing batch. Default: 5000.
     Lower values reduce memory; higher values improve throughput.
 .PARAMETER RouteCacheMaxEntries
-    Max route cache entries. Default: 10000. Set 0 to disable cache.
+    Max route cache entries. Default: 5000. Set 0 to disable cache.
 .EXAMPLE
+    .\run_pref.ps1 13 -MFactor 1 -OutputRoot C:\Pseudo-PFLOW\output\pref_13
     .\run_pref.ps1 22
-    .\run_pref.ps1 22 -MFactor 100 -OutputRoot D:\output\pref_22
-    .\run_pref.ps1 13 -NumThreads 4 -BatchSize 5000 -RouteCacheMaxEntries 5000
+    .\run_pref.ps1 13 -NumThreads 2 -BatchSize 5000 -RouteCacheMaxEntries 0
 #>
 param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -37,11 +37,11 @@ param(
 
     [string]$ConfigFile,
 
-    [int]$NumThreads = 0,
+    [int]$NumThreads = 4,
 
-    [int]$BatchSize = 0,
+    [int]$BatchSize = 5000,
 
-    [int]$RouteCacheMaxEntries = -1
+    [int]$RouteCacheMaxEntries = 5000
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,25 +88,24 @@ if ($ConfigFile) {
     $EffectiveConfig = $MergedConfig
 }
 
-# Build optional JVM flags
-$JvmFlags = @()
-if ($NumThreads -gt 0) {
-    $JvmFlags += "-DnumThreads=$NumThreads"
+# JVM heap defaults — set MAVEN_OPTS if not already configured
+if (-not $env:MAVEN_OPTS) {
+    $env:MAVEN_OPTS = "-Xms2g -Xmx20g -XX:+UseG1GC"
 }
-if ($BatchSize -gt 0) {
-    $JvmFlags += "-DbatchSize=$BatchSize"
-}
-if ($RouteCacheMaxEntries -ge 0) {
-    $JvmFlags += "-DrouteCache.maxEntries=$RouteCacheMaxEntries"
-}
+
+# Build JVM flags (always passed — defaults are production-safe)
+$JvmFlags = @(
+    "-DnumThreads=$NumThreads",
+    "-DbatchSize=$BatchSize",
+    "-DrouteCache.maxEntries=$RouteCacheMaxEntries"
+)
 
 $SamplePct = [math]::Round(100 / $MFactor, 1)
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host " Staging run: prefecture $PrefCode" -ForegroundColor Cyan
 Write-Host " mfactor=$MFactor ($SamplePct% sample)" -ForegroundColor Cyan
-if ($NumThreads -gt 0) { Write-Host " numThreads=$NumThreads" -ForegroundColor Cyan }
-if ($BatchSize -gt 0) { Write-Host " batchSize=$BatchSize" -ForegroundColor Cyan }
-if ($RouteCacheMaxEntries -ge 0) { Write-Host " routeCache.maxEntries=$RouteCacheMaxEntries" -ForegroundColor Cyan }
+Write-Host " numThreads=$NumThreads  batchSize=$BatchSize  cacheMax=$RouteCacheMaxEntries" -ForegroundColor Cyan
+Write-Host " MAVEN_OPTS=$env:MAVEN_OPTS" -ForegroundColor DarkGray
 Write-Host " Output: $OutputRoot" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""

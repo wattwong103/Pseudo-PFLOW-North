@@ -12,11 +12,17 @@
 .PARAMETER OutputBase
     Base directory for all output. Each prefecture gets a subdirectory.
     Default: C:\Pseudo-PFLOW\output
+.PARAMETER NumThreads
+    Max concurrent threads per prefecture. Default: 4.
+.PARAMETER BatchSize
+    Persons per processing batch. Default: 5000.
+.PARAMETER RouteCacheMaxEntries
+    Max route cache entries. Default: 5000. Set 0 to disable.
 .EXAMPLE
     .\run_batch.ps1
     .\run_batch.ps1 -PrefCodes 22, 13
-    .\run_batch.ps1 -PrefCodes 1, 2, 3, 4, 5 -MFactor 100
-    .\run_batch.ps1 -PrefCodes 22 -OutputBase D:\pflow_output
+    .\run_batch.ps1 -PrefCodes 1, 2, 3, 4, 5 -MFactor 1
+    .\run_batch.ps1 -PrefCodes 13 -NumThreads 2 -RouteCacheMaxEntries 0
 #>
 param(
     [Parameter(Position=0)]
@@ -24,7 +30,13 @@ param(
 
     [int]$MFactor = 200,
 
-    [string]$OutputBase = "C:\Pseudo-PFLOW\output"
+    [string]$OutputBase = "C:\Pseudo-PFLOW\output",
+
+    [int]$NumThreads = 4,
+
+    [int]$BatchSize = 5000,
+
+    [int]$RouteCacheMaxEntries = 5000
 )
 
 $ErrorActionPreference = "Continue"
@@ -60,7 +72,8 @@ foreach ($Pref in $PrefCodes) {
     $PrefOutput = Join-Path $OutputBase "pref_$Pref"
 
     try {
-        & "$ScriptDir\run_pref.ps1" $Pref -MFactor $MFactor -OutputRoot $PrefOutput
+        & "$ScriptDir\run_pref.ps1" $Pref -MFactor $MFactor -OutputRoot $PrefOutput `
+            -NumThreads $NumThreads -BatchSize $BatchSize -RouteCacheMaxEntries $RouteCacheMaxEntries
         if ($LASTEXITCODE -eq 0) {
             $Passed += $Pref
         } else {

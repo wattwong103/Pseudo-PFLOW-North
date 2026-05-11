@@ -321,3 +321,20 @@ activity.time.interval=900
 
 # Age threshold for senior-specific activity patterns
 senior.age.threshold=65
+
+# -----------------------------------------------------------------------------
+# Memory / concurrency (production defaults for 32GB VMs)
+# -----------------------------------------------------------------------------
+# These can also be set via run_pref.ps1 parameters or -D JVM flags.
+# Script parameters take priority over config file values.
+
+# Max concurrent threads (default: 4)
+numThreads=4
+
+# Persons per processing batch — generate + write each batch, then release
+# memory before the next batch. Lower = less memory, more I/O. (default: 5000)
+batchSize=5000
+
+# Max route cache entries. Set 0 to disable cache entirely.
+# Cache saves API calls but uses ~50KB per entry. (default: 5000)
+routeCache.maxEntries=5000

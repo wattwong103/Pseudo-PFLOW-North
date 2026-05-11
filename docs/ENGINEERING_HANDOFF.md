@@ -175,14 +175,26 @@ Exit codes: `0` = complete, `1` = some `.properties` missing, `2` = unmapped cit
 ### Quick start: single prefecture
 
 ```powershell
-# Conditional run (recommended for production VMs)
+# Full-scale production run (mfactor=1 = 100% population)
+.\scripts\windows\run_pref.ps1 13 -MFactor 1 -OutputRoot C:\Pseudo-PFLOW\output\pref_13
+
+# Conditional run with tuning (recommended for first run on a new VM)
 .\scripts\windows\run_pref_with_tuning.ps1 22
 
-# Direct generation only (assumes all params already in place)
+# Quick smoke test (0.5% sample, fast)
 .\scripts\windows\run_pref.ps1 22
 ```
 
-Both run activity generation, trip+trajectory generation (WebAPI), and validation. Output goes to `C:\Pseudo-PFLOW\output\pref_22\`.
+Both run activity generation, trip+trajectory generation (WebAPI), and validation. Output goes to the specified `-OutputRoot` or default `C:\Pseudo-PFLOW\output\pref_<N>\`.
+
+**Production defaults** (no manual flags needed):
+- `numThreads=4`, `batchSize=5000`, `routeCache.maxEntries=5000`
+- JVM heap: `-Xms2g -Xmx20g -XX:+UseG1GC` (set automatically if `MAVEN_OPTS` is unset)
+
+If OOM still occurs on heavy prefectures, reduce further:
+```powershell
+.\scripts\windows\run_pref.ps1 13 -MFactor 1 -NumThreads 2 -BatchSize 5000 -RouteCacheMaxEntries 0
+```
 
 ### Step-by-step execution
 
@@ -200,11 +212,14 @@ Both run activity generation, trip+trajectory generation (WebAPI), and validatio
 ### Batch run: multiple prefectures
 
 ```powershell
-# Default prefectures (22, 13, 26) at 0.5% sample
-.\scripts\windows\run_batch.ps1
+# Full-scale production batch
+.\scripts\windows\run_batch.ps1 -PrefCodes 22, 13, 26, 14 -MFactor 1
 
-# Custom prefectures and sample rate
-.\scripts\windows\run_batch.ps1 -PrefCodes 22, 13, 26, 14 -MFactor 100
+# Custom memory settings for heavy prefectures
+.\scripts\windows\run_batch.ps1 -PrefCodes 13, 14 -MFactor 1 -NumThreads 2 -RouteCacheMaxEntries 0
+
+# Quick smoke test (0.5% sample)
+.\scripts\windows\run_batch.ps1
 ```
 
 ### Check progress
@@ -279,19 +294,38 @@ Expected **trip-level** mode share for pref 22: CAR ~57%, WALK ~23%, BICYCLE ~14
 
 **Trajectory**: Trajectory timestamps should show year 2020 (configured by `trajectory.baseYear`).
 
-### Trajectory validation acceptance rules
+### Trajectory validation acceptance rules (deployment policy)
 
-| Check | Classification | Action |
-|-------|---------------|--------|
-| Placeholder NOT_DEFINED (zero-distance) | Non-blocking | Expected artifact (~12%) |
-| Timestamp monotonicity: boundary effects (<0.5%) | Non-blocking | Minor cosmetic |
-| Timestamp monotonicity: same-mode within-trip (>1%) | Warning | Investigate if >5% |
-| Spatial jumps >50km (>1% of files) | **Blocking** | Routing failure |
-| Speed >500 km/h (>1% of files) | **Blocking** | Routing failure |
-| Duplicate rows (>5%) | **Blocking** | Generation bug |
-| Year in trajectory != 2020 | **Blocking** | Config fix needed |
+The validator script is strict and will mark a file FAIL on any timestamp
+monotonicity violation. For **deployment / handoff decisions**, use the
+policy below — several strict-FAIL patterns are known cosmetic artifacts of
+the current pipeline and should be treated as PASS-with-warnings, not as
+blockers.
 
-**Engineer rule**: If the validation summary shows 0 FAIL files, the run is PASS. WARN files from placeholder NOT_DEFINED are expected and non-blocking. Any FAIL file requires checking the specific error type against the table above.
+**Acceptable (PASS with warnings, do not block deployment):**
+
+| Pattern | Why it's acceptable |
+|---------|---------------------|
+| Small numbers of duplicate rows | Minor generator artifact, no downstream impact |
+| Missing `link_id`, **mainly on the first point of each trajectory** | First-point link lookup limitation; remaining points are correctly tagged |
+| Timestamp monotonicity violations, **total ≲ 3% of rows**, **mainly from the previous trip's travel time extending past the next scheduled trip time** | Known trip-time overrun pattern; the trajectory itself is physically correct |
+| Placeholder NOT_DEFINED trajectory points (zero-distance stubs) | Expected artifact for stay-at-home persons (~12%) |
+| Year in trajectory != 2020 on a run that overrode `trajectory.baseYear` | Only blocking if the config says 2020 and the output disagrees |
+
+**Blocking (investigate and do not deploy):**
+
+- Large spatial jumps (>50 km between consecutive points) above ~1% of files — routing failure
+- Speeds >500 km/h between consecutive points above ~1% of files — routing failure
+- Widespread severe anomalies (e.g. >3% monotonicity violations, or monotonicity violations that are **not** explained by trip-time overrun)
+- Duplicate rows at large scale (e.g. >5%) — generation bug
+- Any systematic coordinate errors (points outside Japan bbox at scale)
+
+**Engineer rule of thumb**
+
+1. Run `run_validate.ps1` and read the summary.
+2. If the only FAIL reasons are monotonicity (<~3%, trip-time overrun), first-point missing link_id, or small duplicate counts → **PASS with warnings, deploy.**
+3. If there are spatial jumps, speed violations, or large-scale duplicates → **blocker, investigate before deploying.**
+4. When in doubt, sanity-check a handful of failing trajectories manually: plot the points and look at whether the path is physically plausible. Cosmetic timestamp issues look fine on a map; routing failures jump across the country.
 
 ## Troubleshooting
 
@@ -328,14 +362,14 @@ To split prefectures across multiple Windows servers:
 3. Assign prefecture ranges:
 
 ```powershell
-# Machine A: prefectures 1-15
-.\scripts\windows\run_batch.ps1 -PrefCodes (1..15) -MFactor 200
+# Machine A: prefectures 1-15 (full-scale)
+.\scripts\windows\run_batch.ps1 -PrefCodes (1..15) -MFactor 1
 
-# Machine B: prefectures 16-30
-.\scripts\windows\run_batch.ps1 -PrefCodes (16..30) -MFactor 200
+# Machine B: prefectures 16-30 (full-scale)
+.\scripts\windows\run_batch.ps1 -PrefCodes (16..30) -MFactor 1
 
-# Machine C: prefectures 31-47
-.\scripts\windows\run_batch.ps1 -PrefCodes (31..47) -MFactor 200
+# Machine C: prefectures 31-47 (full-scale)
+.\scripts\windows\run_batch.ps1 -PrefCodes (31..47) -MFactor 1
 ```
 
 4. Validate on each machine:

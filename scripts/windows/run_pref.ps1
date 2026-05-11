@@ -13,9 +13,17 @@
     Base output directory. Default: C:\Pseudo-PFLOW\output\pref_<N>
 .PARAMETER ConfigFile
     Optional external config file path.
+.PARAMETER NumThreads
+    Max concurrent threads. Default: all CPU cores.
+.PARAMETER BatchSize
+    Persons per processing batch. Default: 10000.
+    Lower values reduce memory; higher values improve throughput.
+.PARAMETER RouteCacheMaxEntries
+    Max route cache entries. Default: 10000. Set 0 to disable cache.
 .EXAMPLE
     .\run_pref.ps1 22
     .\run_pref.ps1 22 -MFactor 100 -OutputRoot D:\output\pref_22
+    .\run_pref.ps1 13 -NumThreads 4 -BatchSize 5000 -RouteCacheMaxEntries 5000
 #>
 param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -29,7 +37,11 @@ param(
 
     [string]$ConfigFile,
 
-    [int]$NumThreads = 0
+    [int]$NumThreads = 0,
+
+    [int]$BatchSize = 0,
+
+    [int]$RouteCacheMaxEntries = -1
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,12 +93,20 @@ $JvmFlags = @()
 if ($NumThreads -gt 0) {
     $JvmFlags += "-DnumThreads=$NumThreads"
 }
+if ($BatchSize -gt 0) {
+    $JvmFlags += "-DbatchSize=$BatchSize"
+}
+if ($RouteCacheMaxEntries -ge 0) {
+    $JvmFlags += "-DrouteCache.maxEntries=$RouteCacheMaxEntries"
+}
 
 $SamplePct = [math]::Round(100 / $MFactor, 1)
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host " Staging run: prefecture $PrefCode" -ForegroundColor Cyan
 Write-Host " mfactor=$MFactor ($SamplePct% sample)" -ForegroundColor Cyan
 if ($NumThreads -gt 0) { Write-Host " numThreads=$NumThreads" -ForegroundColor Cyan }
+if ($BatchSize -gt 0) { Write-Host " batchSize=$BatchSize" -ForegroundColor Cyan }
+if ($RouteCacheMaxEntries -ge 0) { Write-Host " routeCache.maxEntries=$RouteCacheMaxEntries" -ForegroundColor Cyan }
 Write-Host " Output: $OutputRoot" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""

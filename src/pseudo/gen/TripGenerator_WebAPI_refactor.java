@@ -1368,6 +1368,7 @@ public class TripGenerator_WebAPI_refactor {
 				TripGenerator_WebAPI_refactor worker = new TripGenerator_WebAPI_refactor(japan, road, railway, transitStops);
 				prop = savedProp;
 
+				int cityCount = 0;
 				for (File file : groupFiles) {
 					if (!file.getName().contains(".csv")) continue;
 					String cityCode = extractCityCode(file.getName());
@@ -1376,16 +1377,38 @@ public class TripGenerator_WebAPI_refactor {
 
 					long starttime = System.currentTimeMillis();
 					List<Person> agents = PersonAccessor.loadActivity(file.getAbsolutePath(), loadScale, carRatio, bikeRatio);
-					System.out.printf("[city %s, group %s] %s%n", cityCode, groupKey, file.getName());
+					System.out.printf("[city %s, group %s] %s (%d persons)%n",
+						cityCode, groupKey, file.getName(), agents.size());
 					worker.generate(agents);
 					PersonAccessor.writeTrips(tripFileName, agents);
 					PersonAccessor.writeTrajectory(trajectoryFileName, agents);
+
+					// Release person data after writing — trips + trajectory
+					// can be multi-MB per person and must not accumulate across cities
+					for (Person p : agents) {
+						p.listTrips().clear();
+						p.clearTrajectory();
+						p.clearActivity();
+					}
+					agents.clear();
+
+					cityCount++;
 					long endtime = System.currentTimeMillis();
-					System.out.println(file.getName() + ": " + (endtime - starttime));
+					Runtime rt = Runtime.getRuntime();
+					System.out.printf("%s: %dms [heap: %dMB used / %dMB max, cache: %d entries, cities: %d]%n",
+						file.getName(), (endtime - starttime),
+						(rt.totalMemory() - rt.freeMemory()) / (1024 * 1024),
+						rt.maxMemory() / (1024 * 1024),
+						worker.routeCache.size(), cityCount);
 				}
 
 				// Print mixed-route diagnostics for this group
 				printDiagnostics(worker, i, groupKey);
+
+				// Release route cache after each param group to prevent
+				// unbounded growth across cities (dominant OOM source)
+				System.out.println("[memory] Clearing route cache (" + worker.routeCache.size() + " entries)");
+				worker.routeCache.clear();
 			}
 
 		}

@@ -963,12 +963,24 @@ public class TripGenerator_WebAPI_refactor {
 		@Override
 		public Integer call() throws Exception {
 			try {
+			int heartbeatInterval = Integer.parseInt(System.getProperty("heartbeatInterval",
+				prop.getProperty("heartbeatInterval", "500")));
+			long taskStart = System.currentTimeMillis();
 			for (Person p : listAgents) {
 				int res = process(p);
 				if (res < 0) {
 					this.error++;
 				}
 				this.total++;
+				if (heartbeatInterval > 0 && this.total % heartbeatInterval == 0) {
+					Runtime rt = Runtime.getRuntime();
+					long elapsed = (System.currentTimeMillis() - taskStart) / 1000;
+					System.out.printf("  [task %d] %d/%d persons (%ds) [heap: %dMB / %dMB, cache: %d]%n",
+						id, this.total, listAgents.size(), elapsed,
+						(rt.totalMemory() - rt.freeMemory()) / (1024 * 1024),
+						rt.maxMemory() / (1024 * 1024),
+						routeCache.size());
+				}
 			}
 			} catch (Throwable t) {
 				System.err.println("[WebAPI TripTask " + id + "] failed: " + t);
@@ -976,7 +988,6 @@ public class TripGenerator_WebAPI_refactor {
 				if (t instanceof Exception) throw (Exception) t;
 				throw new RuntimeException(t);
 			}
-			// System.out.printf("[%d]-%d-%d%n",id, error, total);
 			return 0;
 		}
 	}

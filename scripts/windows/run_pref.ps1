@@ -20,10 +20,17 @@
     Lower values reduce memory; higher values improve throughput.
 .PARAMETER RouteCacheMaxEntries
     Max route cache entries. Default: 5000. Set 0 to disable cache.
+.PARAMETER ForceActivity
+    Regenerate activity files even if they already exist.
+.PARAMETER ForceTrip
+    Regenerate trip/trajectory for all cities, ignoring done markers.
+.PARAMETER ForceAll
+    Force both activity and trip regeneration.
 .EXAMPLE
     .\run_pref.ps1 13 -MFactor 1 -OutputRoot C:\Pseudo-PFLOW\output\pref_13
-    .\run_pref.ps1 22
-    .\run_pref.ps1 13 -NumThreads 2 -BatchSize 5000 -RouteCacheMaxEntries 0
+    .\run_pref.ps1 13 -MFactor 1 -ForceActivity    # regenerate activity from scratch
+    .\run_pref.ps1 13 -MFactor 1 -ForceTrip        # rerun all cities, keep activity
+    .\run_pref.ps1 13 -MFactor 1 -ForceAll          # regenerate everything
 #>
 param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -41,7 +48,13 @@ param(
 
     [int]$BatchSize = 5000,
 
-    [int]$RouteCacheMaxEntries = 5000
+    [int]$RouteCacheMaxEntries = 5000,
+
+    [switch]$ForceActivity,
+
+    [switch]$ForceTrip,
+
+    [switch]$ForceAll
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,6 +110,7 @@ if (-not $env:MAVEN_OPTS) {
 $JvmFlags = @(
     "-DnumThreads=$NumThreads",
     "-DbatchSize=$BatchSize",
+    "-DforceTrip=$(if ($ForceTrip -or $ForceAll) { 'true' } else { 'false' })",
     "-DrouteCache.maxEntries=$RouteCacheMaxEntries"
 )
 
@@ -113,30 +127,41 @@ Write-Host ""
 $TotalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 # Step 1: Activity generation
-Write-Host "[$PrefCode] Step 1/3: Activity generation..." -ForegroundColor Yellow
-$Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$ActDir = Join-Path $OutputRoot "activity\$PrefCode"
+$ExistingActFiles = (Get-ChildItem -Path $ActDir -Filter "person_*.csv" -ErrorAction SilentlyContinue | Measure-Object).Count
 
-Push-Location $ProjectDir
-try {
-    $ErrorActionPreference = "Continue"
-    & mvn -q exec:java @JvmFlags `
-        "-Dexec.mainClass=pseudo.gen.ActivityGenerator" `
-        "-Dexec.args=$PrefCode $MFactor" `
-        "-Dconfig.file=$EffectiveConfig" 2>&1 | Tee-Object -FilePath (Join-Path $LogDir "activity.log")
-    $ErrorActionPreference = "Stop"
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "[$PrefCode] Activity generation failed (exit code $LASTEXITCODE)"
-        exit $LASTEXITCODE
+if ((-not $ForceActivity) -and (-not $ForceAll) -and ($ExistingActFiles -gt 0)) {
+    Write-Host "[$PrefCode] Step 1/3: [resume] Reusing existing activity output ($ExistingActFiles files in $ActDir)" -ForegroundColor Green
+} else {
+    if ($ForceActivity -or $ForceAll) {
+        Write-Host "[$PrefCode] Step 1/3: Activity generation (forced regeneration)..." -ForegroundColor Yellow
+    } else {
+        Write-Host "[$PrefCode] Step 1/3: Activity generation..." -ForegroundColor Yellow
     }
-} finally {
-    $ErrorActionPreference = "Stop"
-    Pop-Location
-}
+    $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
-$Stopwatch.Stop()
-$ActFiles = (Get-ChildItem -Path (Join-Path $OutputRoot "activity\$PrefCode") -Filter "*.csv" -ErrorAction SilentlyContinue | Measure-Object).Count
-Write-Host "[$PrefCode] Activity done: $ActFiles files, $([int]$Stopwatch.Elapsed.TotalSeconds)s" -ForegroundColor Green
+    Push-Location $ProjectDir
+    try {
+        $ErrorActionPreference = "Continue"
+        & mvn -q exec:java @JvmFlags `
+            "-Dexec.mainClass=pseudo.gen.ActivityGenerator" `
+            "-Dexec.args=$PrefCode $MFactor" `
+            "-Dconfig.file=$EffectiveConfig" 2>&1 | Tee-Object -FilePath (Join-Path $LogDir "activity.log")
+        $ErrorActionPreference = "Stop"
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "[$PrefCode] Activity generation failed (exit code $LASTEXITCODE)"
+            exit $LASTEXITCODE
+        }
+    } finally {
+        $ErrorActionPreference = "Stop"
+        Pop-Location
+    }
+
+    $Stopwatch.Stop()
+    $ExistingActFiles = (Get-ChildItem -Path $ActDir -Filter "person_*.csv" -ErrorAction SilentlyContinue | Measure-Object).Count
+    Write-Host "[$PrefCode] Activity done: $ExistingActFiles files, $([int]$Stopwatch.Elapsed.TotalSeconds)s" -ForegroundColor Green
+}
 Write-Host ""
 
 # Step 2: Trip + trajectory generation (WebAPI)

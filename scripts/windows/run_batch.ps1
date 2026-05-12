@@ -36,7 +36,13 @@ param(
 
     [int]$BatchSize = 5000,
 
-    [int]$RouteCacheMaxEntries = 5000
+    [int]$RouteCacheMaxEntries = 5000,
+
+    [switch]$ForceActivity,
+
+    [switch]$ForceTrip,
+
+    [switch]$ForceAll
 )
 
 $ErrorActionPreference = "Continue"
@@ -72,8 +78,17 @@ foreach ($Pref in $PrefCodes) {
     $PrefOutput = Join-Path $OutputBase "pref_$Pref"
 
     try {
-        & "$ScriptDir\run_pref.ps1" $Pref -MFactor $MFactor -OutputRoot $PrefOutput `
-            -NumThreads $NumThreads -BatchSize $BatchSize -RouteCacheMaxEntries $RouteCacheMaxEntries
+        $RunArgs = @{
+            MFactor = $MFactor
+            OutputRoot = $PrefOutput
+            NumThreads = $NumThreads
+            BatchSize = $BatchSize
+            RouteCacheMaxEntries = $RouteCacheMaxEntries
+        }
+        if ($ForceActivity) { $RunArgs.ForceActivity = $true }
+        if ($ForceTrip) { $RunArgs.ForceTrip = $true }
+        if ($ForceAll) { $RunArgs.ForceAll = $true }
+        & "$ScriptDir\run_pref.ps1" $Pref @RunArgs
         if ($LASTEXITCODE -eq 0) {
             $Passed += $Pref
         } else {

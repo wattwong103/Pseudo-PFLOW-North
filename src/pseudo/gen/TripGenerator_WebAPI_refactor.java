@@ -1398,11 +1398,30 @@ public class TripGenerator_WebAPI_refactor {
 				int batchSize = Integer.parseInt(System.getProperty("batchSize",
 					prop.getProperty("batchSize", "10000")));
 
+				// Resume support: check for force flag
+				boolean forceTrip = Boolean.parseBoolean(
+					System.getProperty("forceTrip",
+						prop.getProperty("forceTrip", "false")));
+
 				for (File file : groupFiles) {
 					if (!file.getName().contains(".csv")) continue;
 					String cityCode = extractCityCode(file.getName());
 					String tripFileName = outputDir + "trip/" + i + "/trip_" + cityCode + ".csv";
 					String trajectoryFileName = outputDir + "trajectory/" + i + "/trajectory_" + cityCode + ".csv";
+					String doneMarker = outputDir + "trip/" + i + "/done_" + cityCode;
+
+					// Resume: skip cities with a done marker (both files fully written)
+					if (!forceTrip && new File(doneMarker).exists()) {
+						System.out.println("[resume] Skipping completed city " + cityCode
+							+ " (done marker exists)");
+						cityCount++;
+						continue;
+					}
+					// Partial output: rerun from scratch (first batch uses append=false)
+					if (!forceTrip && (new File(tripFileName).exists() || new File(trajectoryFileName).exists())) {
+						System.out.println("[resume] Reprocessing partial city " + cityCode
+							+ " (output exists but no done marker)");
+					}
 
 					long starttime = System.currentTimeMillis();
 					List<Person> agents = PersonAccessor.loadActivity(file.getAbsolutePath(), loadScale, carRatio, bikeRatio);
@@ -1448,6 +1467,13 @@ public class TripGenerator_WebAPI_refactor {
 						p.clearActivity();
 					}
 					agents.clear();
+
+					// Write done marker — signals that both trip and trajectory are complete
+					try {
+						new File(doneMarker).createNewFile();
+					} catch (IOException e) {
+						System.err.println("[resume] Warning: could not write done marker: " + doneMarker);
+					}
 
 					cityCount++;
 					long endtime = System.currentTimeMillis();

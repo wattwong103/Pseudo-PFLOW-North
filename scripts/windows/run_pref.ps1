@@ -26,11 +26,15 @@
     Regenerate trip/trajectory for all cities, ignoring done markers.
 .PARAMETER ForceAll
     Force both activity and trip regeneration.
+.PARAMETER ActivityFileOrder
+    Order of activity files (asc or desc). Default: asc.
+    Use desc on a copied VM to process from the back while the original VM
+    works from the front.
 .EXAMPLE
     .\run_pref.ps1 13 -MFactor 1 -OutputRoot C:\Pseudo-PFLOW\output\pref_13
     .\run_pref.ps1 13 -MFactor 1 -ForceActivity    # regenerate activity from scratch
     .\run_pref.ps1 13 -MFactor 1 -ForceTrip        # rerun all cities, keep activity
-    .\run_pref.ps1 13 -MFactor 1 -ForceAll          # regenerate everything
+    .\run_pref.ps1 13 -MFactor 1 -ActivityFileOrder desc   # copied VM, reverse order
 #>
 param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -49,6 +53,9 @@ param(
     [int]$BatchSize = 5000,
 
     [int]$RouteCacheMaxEntries = 5000,
+
+    [ValidateSet("asc", "desc")]
+    [string]$ActivityFileOrder = "asc",
 
     [switch]$ForceActivity,
 
@@ -111,14 +118,15 @@ $JvmFlags = @(
     "-DnumThreads=$NumThreads",
     "-DbatchSize=$BatchSize",
     "-DforceTrip=$(if ($ForceTrip -or $ForceAll) { 'true' } else { 'false' })",
-    "-DrouteCache.maxEntries=$RouteCacheMaxEntries"
+    "-DrouteCache.maxEntries=$RouteCacheMaxEntries",
+    "-DactivityFileOrder=$ActivityFileOrder"
 )
 
 $SamplePct = [math]::Round(100 / $MFactor, 1)
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host " Staging run: prefecture $PrefCode" -ForegroundColor Cyan
 Write-Host " mfactor=$MFactor ($SamplePct% sample)" -ForegroundColor Cyan
-Write-Host " numThreads=$NumThreads  batchSize=$BatchSize  cacheMax=$RouteCacheMaxEntries" -ForegroundColor Cyan
+Write-Host " numThreads=$NumThreads  batchSize=$BatchSize  cacheMax=$RouteCacheMaxEntries  order=$ActivityFileOrder" -ForegroundColor Cyan
 Write-Host " MAVEN_OPTS=$env:MAVEN_OPTS" -ForegroundColor DarkGray
 Write-Host " Output: $OutputRoot" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan

@@ -1345,6 +1345,21 @@ public class TripGenerator_WebAPI_refactor {
 				continue;
 			}
 
+			// Activity file order control (asc or desc by filename).
+			// Used to split work between an original VM (asc) and a copied VM (desc).
+			String activityFileOrder = System.getProperty("activityFileOrder",
+				prop.getProperty("activityFileOrder", "asc")).trim().toLowerCase();
+			java.util.Arrays.sort(actFiles, (a, b) -> a.getName().compareTo(b.getName()));
+			if ("desc".equals(activityFileOrder)) {
+				java.util.Collections.reverse(java.util.Arrays.asList(actFiles));
+			}
+			System.out.println("[activityFileOrder] order=" + activityFileOrder
+				+ ", total files=" + actFiles.length);
+			if (actFiles.length > 0) {
+				System.out.println("[activityFileOrder] first: " + actFiles[0].getName());
+				System.out.println("[activityFileOrder] last:  " + actFiles[actFiles.length - 1].getName());
+			}
+
 			// Group city files by param group so we create one worker per unique group
 			Map<String, List<File>> filesByGroup = new LinkedHashMap<>();
 			for (File file : actFiles) {

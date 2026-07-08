@@ -240,7 +240,8 @@ public class Commuter extends ActGenerator {
         mnlAcs.add(mnlFile, ELabor.WORKER);
 
         // expansion factor: 50 = 2% sample for testing, 1 = full population
-        int mfactor = 50;
+        // 2 = 50% sample (~4.6M 23-ward residents) for GUFM scale-up run
+        int mfactor = 2;
 
         // create activities
 

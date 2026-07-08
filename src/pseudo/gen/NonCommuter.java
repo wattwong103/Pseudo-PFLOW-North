@@ -197,7 +197,8 @@ public class NonCommuter extends ActGenerator {
 		MNLParamAccessor mnlAcs = new MNLParamAccessor();
 		mnlAcs.add(mnlFile, ELabor.NO_LABOR);
 
-		int mfactor = 50;
+		// expansion factor: 50 = 2% sample, 1 = full population; 2 = 50% for GUFM scale-up
+		int mfactor = 2;
 
 		// create activities
 		String outputDir = String.format("%s/activity/", root);

@@ -341,7 +341,8 @@ public class Student extends ActGenerator {
 		// prepare an accessor for school
 		SchoolRefAccessor schAcs = new SchoolRefAccessor();
 		
-		int mfactor = 50;
+		// expansion factor: 50 = 2% sample, 1 = full population; 2 = 50% for GUFM scale-up
+		int mfactor = 2;
 		String prePref = "";
 
 		// create activities

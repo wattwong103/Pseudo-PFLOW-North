@@ -410,7 +410,7 @@ public class SimulationMetrics {
             .count();
             
         double weightLimitedPct = totalDeliveryTrips > 0 ?
-            weightLimited * 100.0 / totalDeliveryTrips : 35.9; // Default to MFS baseline if no trips
+            weightLimited * 100.0 / totalDeliveryTrips : 56.04; // Default to MFS baseline (interfacility, File 03) if no trips
         metrics.put("Weight-Limited Shipments", weightLimitedPct);
 
         // Average Movements per Truck - loaded trips only, matches MFS File 08 / File 18

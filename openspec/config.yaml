@@ -1,0 +1,17 @@
+schema: spec-driven
+
+context: |
+  Pseudo-PFLOW — synthetic transport-flow simulator for Japan (U-Tokyo Sekimoto Lab); outputs Pseudo-PFLOW-format CSV trips calibrated to national statistics.
+  Stack: Java 21 (Maven resolves deps only, not build). Heap-heavy runs via scripts/run_*.sh|.bat. Cross-platform through ${PFLOW_HOME} tokens resolved by src/util/PathResolver.java.
+  Three modules: Truck ABM (truck.sim — ~1.4M trucks, calibrated to MLIT MFS 2013, 51-test suite), Taxi ABM (taxi.sim — 7 cities; Tokyo 19-test A+), Trajectory generator (traj — A* routing on the DRM road network).
+  Calibration is load-bearing: any change to truck.sim / taxi.sim / mfs must re-run pflow-truck-calibrate or pflow-taxi-calibrate; a grade slip is a stop-the-world event.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

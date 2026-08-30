@@ -108,8 +108,8 @@ public final class ValidationTargets {
     /** Target intra-zone trip ratio (percentage) */
     public static final double INTRAZONE_TRIP_RATIO = 20.67;
 
-    /** Target weight-limited shipment percentage */
-    public static final double WEIGHT_LIMITED_SHIPMENTS = 35.9;
+    /** Target weight-limited shipment percentage (interfacility flow, File 03 SS317_H25: 191,301/341,336; refreshed 2026-05-03 per audit F0066+F0110) */
+    public static final double WEIGHT_LIMITED_SHIPMENTS = 56.04;
 
     // ========== Commodity Mix Targets (%) ==========
 

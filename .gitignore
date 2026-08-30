@@ -1,102 +1,102 @@
-# =============================================
-#  Pseudo-PFLOW .gitignore
-# =============================================
-
-# ----- Java build artifacts -----
-bin/
-target/
-out/
-build/
-*.class
-
-# ----- JARs (use Maven for dependencies) -----
-*.jar
-!lib/pflowlib.jar
 !lib/osmpbf-1.3.3.jar
-
-# ----- IDE / Editor -----
-.idea/
-*.iml
-.vscode/
-.classpath
-.project
-.settings/
-.classpath.txt
-.factorypath
-*.sublime-*
-
+!lib/pflowlib.jar
+#  Pseudo-PFLOW .gitignore
 # ----- Claude Code local settings -----
-.claude/
-CLAUDE.md
-
-# ----- Maven wrapper (optional, regenerable) -----
-.mvn/
-
-# ----- Log files -----
-*.log
-hs_err_pid*
-replay_pid*
-
-# ----- OS files -----
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# ----- Temp / backup files -----
-*.tmp
-*.swp
-*.bak
-*.orig
-*.rej
-*.backup
-compile_*_args.txt
-*edit-log.txt
-
-# ----- Large binary data files -----
-*.bin
-*.dat
-*.raster
-
 # ----- Compressed / archive files -----
-*.zip
+# ----- Config test variants (local experiments) -----
+# ----- Environment files -----
+# ----- Generated docs -----
+# ----- IDE / Editor -----
+# ----- JARs (use Maven for dependencies) -----
+# ----- Java build artifacts -----
+# ----- Jupyter / Python -----
+# ----- Large binary data files -----
+# ----- Local compile scripts (contain hardcoded machine paths) -----
+# ----- Local scratch scripts (leading underscore = local-only) -----
+# ----- Log files -----
+# ----- Maven wrapper (optional, regenerable) -----
+# ----- OS files -----
+# ----- Runtime working dirs (LOCAL-ONLY, regenerable) -----
+# ----- Simulation output (large, regenerable) -----
+# ----- Stray JARs at project root -----
+# ----- Temp / backup files -----
+# =============================================
+# Build output directories
+# Compressed files
+# IntelliJ IDEA project files
+# Intermediate or large data files (optional)
+# Java build artifacts
+# Jupyter Notebook checkpoints
+# Local archive (decommissioned artifacts kept for reference)
+# Log files
+# Machine-local config (never commit)
+# Python cache (if scripts are used)
+# Run scripts live in ../scripts/ and are tracked there
+# Temporary files
+# Tuning and staging output
+# Visual Studio Code
+# Windows system files
+# macOS system files
+*.7z
+*.backup
+*.bak
+*.bat
+*.bin
+*.class
+*.csv
+*.dat
+*.iml
+*.jar
+*.json
+*.log
+*.orig
+*.pdf
+*.properties.test_*
+*.ps1
+*.py[cod]
+*.rar
+*.raster
+*.rej
+*.sh
+*.sublime-*
+*.swp
 *.tar
 *.tar.gz
-*.rar
-*.7z
-
-# ----- Simulation output (large, regenerable) -----
-data/output/
-
-# ----- Jupyter / Python -----
-.ipynb_checkpoints/
-__pycache__/
-*.py[cod]
-
-# ----- Generated docs -----
-*.pdf
+*.tmp
+*.tsv
 *.xlsx
-
-# ----- Local compile scripts (contain hardcoded machine paths) -----
-# Run scripts live in ../scripts/ and are tracked there
-compile_local.*
-*.ps1
-*.sh
-*.bat
-
-# ----- Config test variants (local experiments) -----
-*.properties.test_*
-
-# ----- Stray JARs at project root -----
-osmpbf-*.jar
-
-# ----- Environment files -----
+*.zip
+*edit-log.txt
+.DS_Store
+.classpath
+.classpath.txt
+.claude/
 .env
-bin_fresh/
-
-# ----- Runtime working dirs (LOCAL-ONLY, regenerable) -----
-output/
-logs/
-
-# ----- Local scratch scripts (leading underscore = local-only) -----
+.factorypath
+.idea/
+.ipynb_checkpoints/
+.mvn/
+.project
+.settings/
+.vscode/
+CLAUDE.md
+Thumbs.db
 _*.bat
 _*.sh
+__pycache__/
+archive_local/
+bin/
+bin_fresh/
+build/
+compile_*_args.txt
+compile_local.*
+config.local.properties
+data/output/
+desktop.ini
+hs_err_pid*
+logs/
+osmpbf-*.jar
+out/
+output/
+replay_pid*
+target/

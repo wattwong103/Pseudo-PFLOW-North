@@ -1,18 +1,18 @@
 package pseudo.gen;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import org.jboss.netty.util.internal.ThreadLocalRandom;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 
 import jp.ac.ut.csis.pflow.geom2.DistanceUtils;
 import jp.ac.ut.csis.pflow.routing4.logic.Dijkstra;
@@ -33,7 +33,7 @@ import pseudo.res.Country;
 import pseudo.res.Person;
 import pseudo.res.Speed;
 import pseudo.res.Trip;
-import util.PathResolver;
+import utils.ConfigLoader;
 import utils.Roulette;
 
 public class TripGenerator {
@@ -41,17 +41,25 @@ public class TripGenerator {
 	private ModeAccessor modeAcs;
 	private Country japan;
 
-	private static final double MAX_WALK_DISTANCE = 3000;
-	private static final double MAX_SEARCH_STATAION_DISTANCE = 5000;
-	
-	
+	private final double MAX_WALK_DISTANCE;
+	private final double MAX_SEARCH_STATAION_DISTANCE;
+
+
 	public TripGenerator(Country japan, ModeAccessor modeAcs) {
+		this(japan, modeAcs, null);
+	}
+
+	public TripGenerator(Country japan, ModeAccessor modeAcs, Properties prop) {
 		super();
 		this.japan = japan;
 		this.modeAcs = modeAcs;
+		this.MAX_WALK_DISTANCE = prop != null
+				? Double.parseDouble(prop.getProperty("max.walk.distance", "3000")) : 3000;
+		this.MAX_SEARCH_STATAION_DISTANCE = prop != null
+				? Double.parseDouble(prop.getProperty("max.station.search.distance", "5000")) : 5000;
 	}	
 	
-	protected synchronized double getRandom() {
+	protected double getRandom() {
 		return ThreadLocalRandom.current().nextDouble();
 	}
 	
@@ -60,12 +68,14 @@ public class TripGenerator {
 		private List<Person> listAgents;
 		private int error;
 		private int total;
+		private int tripCounter;
 		private final Dijkstra routing = new Dijkstra();
 
 		public TripTask(int id, List<Person> listAgents){
 			this.id = id;
 			this.listAgents = listAgents;
 			this.total = error = 0;
+			this.tripCounter = 0;
 		}	
 		
 		private EPurpose convertHomeMode(ELabor labor) {
@@ -104,8 +114,12 @@ public class TripGenerator {
 
 			EPTCity type = city.getPTType();
 			ETransport primaryMode = null;
+			tripCounter = 0;
 			if (activities.size() <= 1) {
-				person.addTrip(new Trip(ETransport.NOT_DEFINED, EPurpose.HOME, 0, pre.getLocation(), pre.getLocation()));
+				Trip t0 = new Trip(ETransport.NOT_DEFINED, EPurpose.HOME, 0, pre.getLocation(), pre.getLocation());
+				t0.setTripId(++tripCounter);
+				t0.setSubtripId(0);
+				person.addTrip(t0);
 			}else {
 				for (int i = 1; i < activities.size(); i++) {
 					Activity next = activities.get(i);
@@ -145,11 +159,15 @@ public class TripGenerator {
 						}
 						
 						// create trip or sub trips
+						int currentTripId = ++tripCounter;
 						if (nextMode != ETransport.TRAIN) {
 							// single mode
 							long travelTime = (long)(distance/Speed.get(nextMode));
 							long depTime = next.getStartTime() - travelTime;
-							person.addTrip(new Trip(nextMode, purpose, depTime, oll, dll));
+							Trip trip = new Trip(nextMode, purpose, depTime, oll, dll);
+							trip.setTripId(currentTripId);
+							trip.setSubtripId(0);
+							person.addTrip(trip);
 						}else {
 							long travelTime = 0;
 							long time1 = 0;
@@ -183,12 +201,20 @@ public class TripGenerator {
 								egrMode = modeAcs.getCode(tindex);
 								travelTime += (long)(distance / Speed.get(egrMode));
 							}
-							// create sub trips 
+							// create sub trips — repMode = TRAIN (highest priority segment)
 							long depTime = next.getStartTime()-travelTime;
+							ETransport repMode = Trip.computeRepMode(
+								Trip.computeRepMode(accMode, nextMode), egrMode);
 
-							person.addTrip(new Trip(accMode, purpose, depTime, oll, station1));
-							person.addTrip(new Trip(nextMode, purpose, depTime+time1, station1, station2));
-							person.addTrip(new Trip(egrMode, purpose, depTime+time2, station2, dll));
+							Trip t1 = new Trip(accMode, purpose, depTime, oll, station1);
+							t1.setTripId(currentTripId); t1.setSubtripId(0); t1.setRepMode(repMode);
+							Trip t2 = new Trip(nextMode, purpose, depTime+time1, station1, station2);
+							t2.setTripId(currentTripId); t2.setSubtripId(1); t2.setRepMode(repMode);
+							Trip t3 = new Trip(egrMode, purpose, depTime+time2, station2, dll);
+							t3.setTripId(currentTripId); t3.setSubtripId(2); t3.setRepMode(repMode);
+							person.addTrip(t1);
+							person.addTrip(t2);
+							person.addTrip(t3);
 						}
 					}
 					pre = next;
@@ -207,8 +233,11 @@ public class TripGenerator {
 				}
 				this.total++;
 			}
-			}catch(Exception e) {
-				e.printStackTrace();
+			} catch (Throwable t) {
+				System.err.println("[TripGenerator task " + id + "] failed: " + t);
+				t.printStackTrace();
+				if (t instanceof Exception) throw (Exception) t;
+				throw new RuntimeException(t);
 			}
 			// System.out.println(String.format("[%d]-%d-%d",id, error, total));
 			return 0;
@@ -235,69 +264,82 @@ public class TripGenerator {
 		
 		// execute thread processing
 		ExecutorService es = Executors.newFixedThreadPool(numThreads);
+		List<Future<Integer>> futures;
 		try {
-			es.invokeAll(listTasks);
+			futures = es.invokeAll(listTasks);
 			es.shutdown();
-		} catch (Exception exp) {
-			exp.printStackTrace();
-		}		
+		} catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new RuntimeException("Trip generation tasks interrupted", ex);
+		}
+		for (Future<Integer> f : futures) {
+			try {
+				f.get();
+			} catch (ExecutionException ex) {
+				throw new RuntimeException("Trip generation task failed", ex.getCause());
+			} catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				throw new RuntimeException("Trip generation task interrupted", ex);
+			}
+		}
 	}
 	
 
 	public static void main(String[] args) throws IOException {
 		
-		Country japan = new Country();
-		
-		System.out.println("start");
+		System.out.println("TripGenerator: start");
 
-		String dir;
-
-		InputStream inputStream = Commuter.class.getClassLoader().getResourceAsStream("config.properties");
-		if (inputStream == null) {
-			throw new FileNotFoundException("config.properties file not found in the classpath");
-		}
-		Properties prop = new Properties();
-		prop.load(inputStream);
-
-		dir = PathResolver.resolve(prop.getProperty("root"));
-		String facilityDir = PathResolver.resolve(prop.getProperty("inputDir"));
-		System.out.println("Root Directory: " + dir);
-		System.out.println("Facility Directory: " + facilityDir);
-
+		int start = 1;
+		int end = 47;
 		int mfactor = 1;
+		if (args.length >= 1) {
+			start = end = Integer.parseInt(args[0]);
+		}
+		if (args.length >= 2) {
+			mfactor = Integer.parseInt(args[1]);
+		}
+
+		Properties prop = ConfigLoader.load(start);
+
+		String dir = prop.getProperty("root");
+		String inputBase = prop.getProperty("inputDir", dir + "/processing/");
+		System.out.println("Root Directory: " + dir);
+
+		Country japan = new Country();
 
 		// load data
-		String cityFile = String.format("%scity_boundary.csv", facilityDir);
+		String cityFile = String.format("%scity_boundary.csv", inputBase);
 		DataAccessor.loadCityData(cityFile, japan);
 
-		String stationFile = String.format("%sbase_station.csv", facilityDir);
+		String stationFile = String.format("%sbase_station.csv", inputBase);
 		Network station = DataAccessor.loadLocationData(stationFile);
 		japan.setStation(station);
 
-		String modeFile = String.format("%sact_transport.csv", facilityDir);
+		String modeFile = String.format("%sact_transport.csv", inputBase);
 		ModeAccessor modeAcs = new ModeAccessor(modeFile);
 
 		// create worker
-		TripGenerator worker = new TripGenerator(japan, modeAcs);
-		String inputDir = String.format("%s/activity_merged/", dir);
-		String outputDir = String.format("%s/trip/", dir);
+		TripGenerator worker = new TripGenerator(japan, modeAcs, prop);
+		String inputDir = String.format("%s/activity/", dir);
+		String outputDir = String.format("%s/trip/", prop.getProperty("outputDir", dir));
 
 		long starttime = System.currentTimeMillis();
-        ArrayList<Integer> prefectureCodes = new ArrayList<>(Arrays.asList(
-            13  // Tokyo
-        ));
-
-        for (int i: prefectureCodes){
+		for (int i = start; i <= end; i++){
 			File prefDir = new File(outputDir, String.valueOf(i));
 			System.out.println("Start prefecture:" + i + prefDir.mkdirs());
 
 			File actDir = new File(inputDir, String.valueOf(i));
-			for(File file: actDir.listFiles()){
+			File[] actFiles = actDir.listFiles();
+			if (actFiles == null) {
+				System.err.println("Directory not found: " + actDir.getAbsolutePath());
+				continue;
+			}
+			for(File file: actFiles){
 				if (file.getName().contains(".csv")) {
 					List<Person> agents = PersonAccessor.loadActivity(file.getAbsolutePath(), mfactor, 0.4, 0.4);
 					System.out.println(String.format("%s", file.getName()));
 					worker.generate(agents);
-					PersonAccessor.writeTrips(new File(outputDir+ i + "/trip_"+ file.getName().substring(7,12) + ".csv").getAbsolutePath(), agents);
+					PersonAccessor.writeTrips(new File(outputDir+ i + "/trip_"+ file.getName().substring(9,14) + ".csv").getAbsolutePath(), agents);
 				}
 			}
 		}

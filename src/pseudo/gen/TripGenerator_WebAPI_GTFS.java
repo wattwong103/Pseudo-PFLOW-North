@@ -37,7 +37,6 @@ import pseudo.acs.DataAccessor;
 import pseudo.acs.PersonAccessor;
 import pseudo.res.*;
 import pseudo.res.Trip;
-import util.PathResolver;
 
 import javax.net.ssl.SSLContext;
 import java.io.*;
@@ -977,7 +976,7 @@ public class TripGenerator_WebAPI_GTFS {
 	}
 	private static Properties prop;
 	private static void loadProperties() throws Exception {
-		InputStream inputStream = Commuter.class.getClassLoader().getResourceAsStream("config.properties");
+		InputStream inputStream = TripGenerator_WebAPI_GTFS.class.getClassLoader().getResourceAsStream("config.properties");
 		if (inputStream == null) {
 			throw new FileNotFoundException("config.properties file not found in the classpath");
 		}
@@ -987,8 +986,8 @@ public class TripGenerator_WebAPI_GTFS {
 	public static void main(String[] args) throws Exception {
 
 		loadProperties();  // loads 'config.properties' into 'prop'
-		String root = PathResolver.resolve(prop.getProperty("root"));
-		String inputDir = PathResolver.resolve(prop.getProperty("inputDir"));
+		String root = prop.getProperty("root");
+		String inputDir = prop.getProperty("inputDir");
 		System.out.println("Root Directory: " + root);
 		System.out.println("Input Directory: " + inputDir);
 
@@ -1142,7 +1141,7 @@ public class TripGenerator_WebAPI_GTFS {
 //		String root;
 //
 //		loadProperties();
-//		InputStream inputStream = Commuter.class.getClassLoader().getResourceAsStream("config.properties");
+//		InputStream inputStream = TripGenerator_WebAPI_GTFS.class.getClassLoader().getResourceAsStream("config.properties");
 //		if (inputStream == null) {
 //			throw new FileNotFoundException("config.properties file not found in the classpath");
 //		}

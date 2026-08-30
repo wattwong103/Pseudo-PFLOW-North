@@ -5,8 +5,6 @@ import java.util.*;
 
 import jp.ac.ut.csis.pflow.geom2.Mesh;
 import jp.ac.ut.csis.pflow.geom2.MeshUtils;
-import pseudo.gen.Commuter;
-import util.PathResolver;
 
 public class MeshVolumeCalculator {
 
@@ -94,20 +92,20 @@ public class MeshVolumeCalculator {
 
         String dir;
 
-        InputStream inputStream = Commuter.class.getClassLoader().getResourceAsStream("config.properties");
+        InputStream inputStream = MeshVolumeCalculator.class.getClassLoader().getResourceAsStream("config.properties");
         if (inputStream == null) {
             throw new FileNotFoundException("config.properties file not found in the classpath");
         }
         Properties prop = new Properties();
         prop.load(inputStream);
 
-        dir = PathResolver.resolve(prop.getProperty("root"));
+        dir = prop.getProperty("root");
         String inputDir = String.format("%s/trajectory/", dir);
         String outputDir = String.format("%s/mesh_volume/", dir);
         //String input = "/home/ubuntu/Data/pseudo/trajectory/city/";
         //String output = "/home/ubuntu/Data/pseudo/mesh_volume.csv";
-        int start = 13;
-        int end = 13;
+        int start = 22;
+        int end = 22;
 
         for (int i = start; i <=end; i++) {
             // create directory

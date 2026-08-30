@@ -657,7 +657,7 @@ public class TripGenerator_WebAPI_GTFS_OpenTripPlanner {
 	}
 	private static Properties prop;
 	private static void loadProperties() throws Exception {
-		InputStream inputStream = Commuter.class.getClassLoader().getResourceAsStream("config.properties");
+		InputStream inputStream = TripGenerator_WebAPI_GTFS_OpenTripPlanner.class.getClassLoader().getResourceAsStream("config.properties");
 		if (inputStream == null) {
 			throw new FileNotFoundException("config.properties file not found in the classpath");
 		}
@@ -671,7 +671,7 @@ public class TripGenerator_WebAPI_GTFS_OpenTripPlanner {
 		String root;
 
 		loadProperties();
-		InputStream inputStream = Commuter.class.getClassLoader().getResourceAsStream("config.properties");
+		InputStream inputStream = TripGenerator_WebAPI_GTFS_OpenTripPlanner.class.getClassLoader().getResourceAsStream("config.properties");
 		if (inputStream == null) {
 			throw new FileNotFoundException("config.properties file not found in the classpath");
 		}

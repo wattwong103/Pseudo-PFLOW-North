@@ -10,8 +10,16 @@ import jp.ac.ut.csis.pflow.geom2.Mesh;
 import jp.ac.ut.csis.pflow.geom2.MeshUtils;
 import jp.ac.ut.csis.pflow.routing4.res.Network;
 import jp.ac.ut.csis.pflow.routing4.res.Node;
-// GeoTools CRS imports removed — using hardcoded Tokyo Datum → WGS84 shift instead
-// to avoid GeoTools version conflicts between 20.1 and 26-SNAPSHOT jars
+import org.geotools.geometry.jts.JTS;
+import org.geotools.geometry.jts.JTSFactoryFinder;
+import org.geotools.referencing.CRS;
+import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.GeometryFactory;
+
+import org.opengis.referencing.FactoryException;
+import org.opengis.referencing.crs.CoordinateReferenceSystem;
+import org.opengis.referencing.operation.MathTransform;
 
 
 import pseudo.res.City;
@@ -37,11 +45,11 @@ public class DataAccessor {
                 res.addNode(new Node(id, x, y));
             }
         } catch (Exception e) {
-            e.printStackTrace();
-        }		
+            throw new RuntimeException("Failed to load location data: " + filename, e);
+        }
 		return res;
 	}
-	
+
 	public static int loadPreSchoolData(String filename, Country japan){
 		try (BufferedReader br = new BufferedReader(new FileReader(filename))){
             String line;
@@ -59,11 +67,11 @@ public class DataAccessor {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
-        }		
+            throw new RuntimeException("Failed to load preschool data: " + filename, e);
+        }
 		return 1;
 	}
-	
+
 	public static int loadSchoolData(String filename, Country japan){
 		try (BufferedReader br = new BufferedReader(new FileReader(filename))){
             String line;
@@ -91,11 +99,11 @@ public class DataAccessor {
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
-        }		
+            throw new RuntimeException("Failed to load school data: " + filename, e);
+        }
 		return 1;
 	}
-	
+
 	public static int loadCityData(String filename, Country japan){
 		try (BufferedReader br = new BufferedReader(new FileReader(filename));){
             String line;
@@ -123,11 +131,11 @@ public class DataAccessor {
             			new LonLat(lon, lat));
             }
         } catch (Exception e) {
-            e.printStackTrace();
-        }		
+            throw new RuntimeException("Failed to load city data: " + filename, e);
+        }
 		return 1;
 	}
-	
+
 	public static int loadHospitalData(String filename, Country japan) {
 		try (BufferedReader br = new BufferedReader(new FileReader(filename));){
             String line;
@@ -152,30 +160,44 @@ public class DataAccessor {
             	}
             }
         } catch (Exception e) {
-            e.printStackTrace();
-        }		
+            throw new RuntimeException("Failed to load hospital data: " + filename, e);
+        }
 		return 1;
 	}
 
-	// Tokyo Datum (EPSG:4301) → WGS84 (EPSG:4326) approximate shift for Kanto region
-	// Molodensky parameters: dx=-148, dy+507, dz+681 → ~12m accuracy, sufficient for mesh assignment
-	private static final double TOKYO_TO_WGS84_DLAT = +0.000106950;
-	private static final double TOKYO_TO_WGS84_DLON = -0.000293000;
+	public static void loadRestaurantData(String filename, Country japan) throws FactoryException {
+		CoordinateReferenceSystem sourceCRS = CRS.decode("EPSG:4301"); // Replace <sourceCRSCode> with your original CRS code
+		CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326");
+		MathTransform transform = CRS.findMathTransform(sourceCRS, targetCRS, true);
 
-	public static void loadRestaurantData(String filename, Country japan) {
+		GeometryFactory geometryFactory = (GeometryFactory) JTSFactoryFinder.getGeometryFactory();
+
 		// restaurant data from TelePointDB 2018
 		try(BufferedReader br = new BufferedReader((new FileReader(filename)));){
 			String line;
 			br.readLine();
 			while((line = br.readLine()) != null){
 				String[] items = line.split(",");
-				String gcode = items[7];  // admin code
+				if (items.length < 22) {
+					System.err.println("DataAccessor.loadRestaurantData: skipping short row (" + items.length + " cols)");
+					continue;
+				}
+				String gcode = items[7];  // admin code (Telepoint uses 4-digit for prefs 01-09)
+				if (gcode.length() == 4 && Character.isDigit(gcode.charAt(0))) {
+					gcode = "0" + gcode;
+				}
 				double lon = Double.parseDouble(items[20]);
 				double lat = Double.parseDouble(items[21]);
 
-				// Apply Tokyo Datum → WGS84 shift
-				double transformedLon = lon + TOKYO_TO_WGS84_DLON;
-				double transformedLat = lat + TOKYO_TO_WGS84_DLAT;
+				Coordinate coord = new Coordinate(lat, lon);
+				Point point = geometryFactory.createPoint(coord);
+
+				// Transform point
+				Point transformedPoint = (Point) JTS.transform(point, transform);
+
+				// Extract transformed coordinates
+				double transformedLon = transformedPoint.getCoordinate().y;
+				double transformedLat = transformedPoint.getCoordinate().x;
 
 				Mesh mesh = MeshUtils.createMesh(3, transformedLon, transformedLat);
 				String mcode = mesh.getCode();
@@ -190,24 +212,40 @@ public class DataAccessor {
 				}
 			};
 		} catch (Exception e) {
-			e.printStackTrace();
+			throw new RuntimeException("Failed to load restaurant data: " + filename, e);
 		}
 	};
 
-	public static void loadRetailData(String filename, Country japan) {
-		// retail data from TelePointDB 2018
+	public static void loadRetailData(String filename, Country japan) throws FactoryException {
+		CoordinateReferenceSystem sourceCRS = CRS.decode("EPSG:4301"); // Replace <sourceCRSCode> with your original CRS code
+		CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326");
+		MathTransform transform = CRS.findMathTransform(sourceCRS, targetCRS, true);
+
+		GeometryFactory geometryFactory = (GeometryFactory) JTSFactoryFinder.getGeometryFactory();
+		// restaurant data from TelePointDB 2018
 		try(BufferedReader br = new BufferedReader((new FileReader(filename)));){
 			String line;
 			br.readLine();
 			while((line = br.readLine()) != null){
 				String[] items = line.split(",");
-				String gcode = items[7];  // admin code
+				if (items.length < 22) {
+					System.err.println("DataAccessor.loadRetailData: skipping short row (" + items.length + " cols)");
+					continue;
+				}
+				String gcode = items[7];  // admin code (Telepoint uses 4-digit for prefs 01-09)
+				if (gcode.length() == 4 && Character.isDigit(gcode.charAt(0))) {
+					gcode = "0" + gcode;
+				}
 				double lon = Double.parseDouble(items[20]);
 				double lat = Double.parseDouble(items[21]);
 
-				// Apply Tokyo Datum → WGS84 shift
-				double transformedLon = lon + TOKYO_TO_WGS84_DLON;
-				double transformedLat = lat + TOKYO_TO_WGS84_DLAT;
+				Point point = geometryFactory.createPoint(new Coordinate(lat, lon));
+				// Transform point to the target CRS
+				Point transformedPoint = (Point) JTS.transform(point, transform);
+
+				// Extract transformed coordinates
+				double transformedLon = transformedPoint.getCoordinate().y;
+				double transformedLat = transformedPoint.getCoordinate().x;
 
 				Mesh mesh = MeshUtils.createMesh(3, transformedLon, transformedLat);
 				String mcode = mesh.getCode();
@@ -215,14 +253,14 @@ public class DataAccessor {
 				City city = japan.getCity(gcode);
 				if (city != null) {
 					GMesh gmesh = japan.hasMesh(mcode) ? japan.getMesh(mcode) : new GMesh(mesh);
-					double capacity = 10000; //
+					double capacity = 10000;
 					Facility fac = new Facility(0, transformedLon, transformedLat, gcode, capacity);
 					gmesh.addRetail(fac);
 					city.addMesh(gmesh);
 				}
 			};
 		} catch (Exception e) {
-			e.printStackTrace();
+			throw new RuntimeException("Failed to load retail data: " + filename, e);
 		}
 	};
 
@@ -251,11 +289,11 @@ public class DataAccessor {
             	}
             }
         } catch (Exception e) {
-            e.printStackTrace();
-        }		
+            throw new RuntimeException("Failed to load Zenrin tatemono data: " + filename, e);
+        }
 		return 1;
 	}
-	
+
 	public static int loadEconomicCensus(String filename, Country japan){
 		try (BufferedReader br = new BufferedReader(new FileReader(filename))){
             String line;
@@ -281,9 +319,9 @@ public class DataAccessor {
                	}
             }
         } catch (Exception e) {
-            e.printStackTrace();
-        }		
+            throw new RuntimeException("Failed to load economic census: " + filename, e);
+        }
 		return 1;
 	}
-		
+
 }

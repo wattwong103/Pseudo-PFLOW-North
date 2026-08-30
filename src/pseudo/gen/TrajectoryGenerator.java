@@ -11,6 +11,7 @@ import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -35,18 +36,29 @@ import pseudo.res.ETransport;
 import pseudo.res.Person;
 import pseudo.res.SPoint;
 import pseudo.res.Trip;
-import util.PathResolver;
+import utils.ConfigLoader;
 
 public class TrajectoryGenerator {
 	private Network road;
 	private Network railway;
 
-	private static final double MAX_WALK_DISTANCE = 3000;
-	private static final double MAX_SEARCH_STATAION_DISTANCE = 5000;
-	
-	public TrajectoryGenerator(Network road, Network railway){
+	private final double MAX_WALK_DISTANCE;
+	private final double MAX_SEARCH_STATAION_DISTANCE;
+	private final int trajectoryBaseYear;
+
+	public TrajectoryGenerator(Network road, Network railway) {
+		this(road, railway, null);
+	}
+
+	public TrajectoryGenerator(Network road, Network railway, Properties prop) {
 		this.road = road;
 		this.railway = railway;
+		this.MAX_WALK_DISTANCE = prop != null
+				? Double.parseDouble(prop.getProperty("max.walk.distance", "3000")) : 3000;
+		this.MAX_SEARCH_STATAION_DISTANCE = prop != null
+				? Double.parseDouble(prop.getProperty("max.station.search.distance", "5000")) : 5000;
+		this.trajectoryBaseYear = prop != null
+				? Integer.parseInt(prop.getProperty("trajectory.baseYear", "2020")) : 2020;
 	}	
 
 	public class RoutingTask implements Callable<Integer>{
@@ -116,10 +128,12 @@ public class TrajectoryGenerator {
 				for (int i = 0; i < nodes.size(); i++) {
 					ILonLat node = nodes.get(i);
 					Date date = timeMap.get(node);
-					Calendar cl = Calendar. getInstance();
+					Calendar cl = Calendar.getInstance();
 					cl.setTime(date);
-					cl.add(Calendar.YEAR, 45);
-					cl.add(Calendar.MONTH, 9);
+					// Set trajectory output to target calendar year and month directly
+					// (legacy pipeline — not used in Windows production)
+					cl.set(Calendar.YEAR, trajectoryBaseYear);
+					cl.set(Calendar.MONTH, Calendar.OCTOBER);
 					date = cl.getTime();
 					if (i == 0) {
 						node = oll;
@@ -174,8 +188,11 @@ public class TrajectoryGenerator {
 					p.clearTrajectory();
 					p.clearActivity();
 				}
-			}catch(Exception e) {
-				e.printStackTrace();
+			} catch (Throwable t) {
+				System.err.println("[TrajectoryGenerator task " + id + "] failed: " + t);
+				t.printStackTrace();
+				if (t instanceof Exception) throw (Exception) t;
+				throw new RuntimeException(t);
 			}
 			return 0;
 		}
@@ -200,7 +217,18 @@ public class TrajectoryGenerator {
 		try {
 			es.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
 		} catch (InterruptedException e) {
-			e.printStackTrace();
+			Thread.currentThread().interrupt();
+			throw new RuntimeException("Trajectory routing tasks interrupted", e);
+		}
+		for (Future<Integer> f : features) {
+			try {
+				f.get();
+			} catch (ExecutionException ex) {
+				throw new RuntimeException("Trajectory routing task failed", ex.getCause());
+			} catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				throw new RuntimeException("Trajectory routing task interrupted", ex);
+			}
 		}
 		return 0;
 	}
@@ -243,30 +271,29 @@ public class TrajectoryGenerator {
 	
 	public static void main(String[] args) throws IOException {
 
-		String dir;
+		System.out.println("TrajectoryGenerator: start");
 
-		InputStream inputStream = Commuter.class.getClassLoader().getResourceAsStream("config.properties");
-		if (inputStream == null) {
-			throw new FileNotFoundException("config.properties file not found in the classpath");
+		int start = 1;
+		int end = 47;
+		if (args.length >= 1) {
+			start = end = Integer.parseInt(args[0]);
 		}
-		Properties prop = new Properties();
-		prop.load(inputStream);
 
-		dir = PathResolver.resolve(prop.getProperty("root"));
-		String pflowHome = PathResolver.getPflowHome();
+		Properties prop = ConfigLoader.load(start);
+
+		String dir = prop.getProperty("root");
+		String inputBase = prop.getProperty("inputDir", dir + "/processing/");
 		System.out.println("Root Directory: " + dir);
-		String roaddir = String.format("%s/data/network/", pflowHome);
+		String roaddir = String.format("%snetwork/", inputBase);
 
 		String railFile = String.format("%srailnetwork.tsv", roaddir);
-
 		Network railway = RailLoader.load(railFile);
 
-		String inputDir = String.format("%strip/", dir);
-		String outputDir = String.format("%strajectory/", dir);
+		String outputRoot = prop.getProperty("outputDir", dir);
+		String inputDir = String.format("%strip/", outputRoot);
+		String outputDir = String.format("%strajectory/", outputRoot);
 
 		// create trajectories
-        int start = 13;
-        int end = 13;
 		for (int i = start; i <= end; i++) {
 			// create directory
 			File prefDir = new File(outputDir, String.valueOf(i));
@@ -280,6 +307,10 @@ public class TrajectoryGenerator {
 			Map<String, List<File>> map = new TreeMap<>();
 
 			File[] files = (new File(inputDir, String.valueOf(i))).listFiles();
+			if (files == null) {
+				System.err.println("Directory not found: " + new File(inputDir, String.valueOf(i)).getAbsolutePath());
+				continue;
+			}
 			for (File file : files) {
 //				if(done.contains(file.getName().substring(0,12))){continue;}
 				int pref = Integer.parseInt(file.getName().substring(5, 7));
@@ -293,7 +324,7 @@ public class TrajectoryGenerator {
 			for (Map.Entry<String, List<File>> e : map.entrySet()) {
 				System.out.print(e.getKey());
 				long starttime = System.currentTimeMillis();
-				TrajectoryGenerator worker = new TrajectoryGenerator(road, railway);
+				TrajectoryGenerator worker = new TrajectoryGenerator(road, railway, prop);
 				String header = String.format("%strajectory_%s", outputDir+ i +"/", e.getKey());
 				// String header = String.format("%sperson_%s", outputDir, e.getKey());
 				Path p = Paths.get(header+"_0001_000000.csv");

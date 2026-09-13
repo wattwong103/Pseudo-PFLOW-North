@@ -1,0 +1,50 @@
+apiVersion: ai-sdlc.io/v1alpha1
+kind: AgentRole
+metadata:
+  name: default-agent
+spec:
+  role: developer
+  goal: Implement issue requirements with tests
+  # Tier: coding-agent (default).
+  # Filesystem + shell editing surface only. No web access, no sub-agent
+  # spawning, no Skill loading. This matches the pre-AISDLC-79 default
+  # plus NotebookEdit (parity with the Claude Code SDK's editing surface).
+  tools:
+    - Edit          # write to existing files
+    - Write         # create new files
+    - Read          # read source / configs
+    - Glob          # discover files by pattern
+    - Grep          # search code
+    - Bash          # run tests, lint, build, git
+    - NotebookEdit  # edit Jupyter notebooks (parity with SDK editing surface)
+    # Excluded by default (opt in via --role research|meta during init):
+    #   - WebFetch    — pulls untrusted remote content into context (research tier)
+    #   - WebSearch   — same (research tier)
+    #   - Task        — spawns sub-agents; cost + reasoning amplification (meta tier)
+    #   - Skill       — loads external skill packs (meta tier)
+  constraints:
+    maxFilesPerChange: 15
+    requireTests: true
+    blockedPaths:
+      - .github/workflows/**
+      - .ai-sdlc/**
+    blockedActions:
+      - 'git merge*'
+      - 'gh pr merge*'
+      - 'gh pr close*'
+      - 'gh issue close*'
+      - 'git push --force*'
+      - 'git push -f*'
+      - 'git reset --hard*'
+      - 'git checkout -- .*'
+      - 'git restore .*'
+      - 'git branch -D*'
+      - 'git branch -d*'
+      - 'git push origin pseudo-pflow-v3.2-unified*'
+      - 'git push * pseudo-pflow-v3.2-unified'
+      - 'git push origin master*'
+      - 'git push * master'
+      - 'git commit --no-verify*'
+      - 'git commit -n *'
+      - 'git push --no-verify*'
+      - 'git config core.hooksPath*'

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Branch guard: pushes that update a protected branch are refused unless every changed file matches
+# an exempt prefix (.githooks/exempt-paths). Protected list: .githooks/protected-branches (default main, master).
+# Override (humans only): ALLOW_MAIN_PUSH=1
+root=$(git rev-parse --show-toplevel); zero=0000000000000000000000000000000000000000
+protected=$( [ -f "$root/.githooks/protected-branches" ] && grep -vE '^\s*(#|$)' "$root/.githooks/protected-branches" || printf 'main\nmaster\n')
+while read -r local_ref local_sha remote_ref remote_sha; do
+  name=${remote_ref#refs/heads/}
+  printf '%s\n' "$protected" | grep -qx "$name" || continue
+  [ "${ALLOW_MAIN_PUSH:-0}" = "1" ] && continue
+  [ "$local_sha" = "$zero" ] && { echo "pre-push: deleting '$remote_ref' is blocked." >&2; exit 1; }
+  [ "$remote_sha" = "$zero" ] && { echo "pre-push: creating '$remote_ref' by push is blocked." >&2; exit 1; }
+  changed=$(git diff --name-only "$remote_sha" "$local_sha" 2>/dev/null) || { echo "pre-push: cannot diff against $remote_sha; run 'git fetch' first." >&2; exit 1; }
+  if [ -f "$root/.githooks/exempt-paths" ]; then
+    other=$(printf '%s\n' "$changed" | grep -v '^$' | grep -vE "^($(grep -vE '^\s*(#|$)' "$root/.githooks/exempt-paths" | paste -sd'|' -))" || true)
+  else other=$(printf '%s\n' "$changed" | grep -v '^$' || true); fi
+  if [ -n "$other" ]; then
+    echo "pre-push: pushing to '$remote_ref' directly is blocked:" >&2; printf '%s\n' "$other" | sed 's/^/    /' >&2
+    echo "  Push a task branch and open a PR." >&2; exit 1
+  fi
+done
+exit 0

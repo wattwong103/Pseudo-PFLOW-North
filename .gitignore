@@ -100,3 +100,23 @@ out/
 output/
 replay_pid*
 target/
+
+# ai-sdlc:runtime-gitignore
+.ai-sdlc/state.db
+.ai-sdlc/state/
+.ai-sdlc/audit.jsonl
+.worktrees/*
+!.worktrees/.active-task
+# agent scaffolding never enters git
+.claude/
+.codex/
+.grok/
+.agents/
+AGENTS.md
+CLAUDE.md
+.mcp.json
+openspec/
+.mavis/
+.harness/
+.cursor/
+.aider*

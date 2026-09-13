@@ -1,0 +1,19 @@
+#!/bin/sh
+# Branch guard: direct commits on a protected branch are refused for humans and agents alike.
+# Protected branches: one per line in .githooks/protected-branches (default: main, master).
+# Optional exemptions: path prefixes in .githooks/exempt-paths — a commit whose staged files ALL
+# start with an exempt prefix is allowed. Emergency override (humans only): ALLOW_MAIN_COMMIT=1
+root=$(git rev-parse --show-toplevel); branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+protected=$( [ -f "$root/.githooks/protected-branches" ] && grep -vE '^\s*(#|$)' "$root/.githooks/protected-branches" || printf 'main\nmaster\n')
+printf '%s\n' "$protected" | grep -qx "$branch" || exit 0
+[ "${ALLOW_MAIN_COMMIT:-0}" = "1" ] && exit 0
+staged=$(git diff --cached --name-only)
+[ -z "$staged" ] && { echo "pre-commit: empty commits on '$branch' are blocked. Use a task branch." >&2; exit 1; }
+if [ -f "$root/.githooks/exempt-paths" ]; then
+  other=$(printf '%s\n' "$staged" | grep -vE "^($(grep -vE '^\s*(#|$)' "$root/.githooks/exempt-paths" | paste -sd'|' -))" || true)
+else other="$staged"; fi
+if [ -n "$other" ]; then
+  echo "pre-commit: direct commits to '$branch' are blocked:" >&2; printf '%s\n' "$other" | sed 's/^/    /' >&2
+  echo "  Use: git switch -c ai-sdlc/<task-id>-<slug>, then open a PR." >&2; exit 1
+fi
+exit 0

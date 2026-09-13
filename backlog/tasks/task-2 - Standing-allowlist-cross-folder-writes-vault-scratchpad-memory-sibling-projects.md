@@ -23,5 +23,5 @@ permittedExternalPaths:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Always active via the tracked sentinel .worktrees/.active-task; its permittedExternalPaths frontmatter is the only mechanism the ai-sdlc v0.20.1 Write/Edit hook offers for writes outside this repo. Keep status In Progress. Pipeline per-worktree sentinels take precedence. PC owners: append the machine's Claude temp and ~/.claude/projects roots. Approved by the operator 2026-09-14.
+Activated per clone by `sh .githooks/setup.sh`, which writes the untracked sentinel .worktrees/.active-task; its permittedExternalPaths frontmatter is the only mechanism the ai-sdlc v0.20.1 Write/Edit hook offers for writes outside this repo. Keep status In Progress. Pipeline per-worktree sentinels take precedence. PC owners: append the machine's Claude temp and ~/.claude/projects roots. Approved by the operator 2026-09-14.
 <!-- SECTION:DESCRIPTION:END -->

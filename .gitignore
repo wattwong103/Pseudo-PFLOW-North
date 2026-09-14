@@ -105,8 +105,7 @@ target/
 .ai-sdlc/state.db
 .ai-sdlc/state/
 .ai-sdlc/audit.jsonl
-.worktrees/*
-!.worktrees/.active-task
+.worktrees/
 # agent scaffolding never enters git
 .claude/
 .codex/
@@ -120,3 +119,8 @@ openspec/
 .harness/
 .cursor/
 .aider*
+
+# governance hooks and their setup script are tracked even where *.sh is ignored
+!.githooks/*.sh
+!.githooks/pre-commit
+!.githooks/pre-push

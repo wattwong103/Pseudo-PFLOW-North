@@ -14,7 +14,7 @@ ordinal: 1000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Operator task. Read .ai-sdlc/agent-role.yaml, .ai-sdlc/review-policy.md and .githooks/. Merge the PR, then run: git config core.hooksPath .githooks in every clone.
+Operator task. Read .ai-sdlc/agent-role.yaml, .ai-sdlc/review-policy.md and .githooks/. Merge the PR, then run `sh .githooks/setup.sh` in every clone.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

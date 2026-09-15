@@ -131,6 +131,23 @@ public class PersonAccessorTripFormatTest {
 	}
 
 	@Test
+	public void unsetTripIdsDoNotCollapse() throws Exception {
+		Person p = person(PID_A);
+		p.addTrip(leg(ETransport.CAR, EPurpose.OFFICE, 28000, 0,
+				139.74, 35.68, 139.77, 35.70, 0, 0, ETransport.CAR));
+		p.addTrip(leg(ETransport.CAR, EPurpose.HOME, 61200, 0,
+				139.77, 35.70, 139.74, 35.68, 0, 0, ETransport.CAR));
+
+		File f = tempFile("trip-zero-ids");
+		PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p));
+		List<String[]> rows = readRows(f);
+		assertEquals("legacy 9-col rows with tripId=0 stay separate trips", 2, rows.size());
+		assertEquals(Long.toString(PID_A * 1000 + 1), rows.get(0)[9]);
+		assertEquals(Long.toString(PID_A * 1000 + 2), rows.get(1)[9]);
+		assertEquals("33200", rows.get(0)[11]);
+	}
+
+	@Test
 	public void durationEqualsGapToNextDep() throws Exception {
 		Person p = person(PID_A);
 		p.addTrip(leg(ETransport.TRAIN, EPurpose.OFFICE, 28000, 28800,

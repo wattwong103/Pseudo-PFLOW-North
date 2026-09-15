@@ -210,8 +210,13 @@ public class PersonAccessor{
 	public static List<CollapsedTrip> collapseTrips(Person person) {
 		List<Trip> legs = person.listTrips();
 		Map<Long, List<Trip>> groups = new LinkedHashMap<>();
+		int ordinal = 0;
 		for (Trip t : legs) {
-			groups.computeIfAbsent(t.getTripId(), k -> new ArrayList<>()).add(t);
+			// tripId==0 means the row was never given a generator id (legacy
+			// 9-col load). Do not collapse those together — each row is a trip.
+			long key = t.getTripId() == 0L ? Long.MIN_VALUE + ordinal : t.getTripId();
+			ordinal++;
+			groups.computeIfAbsent(key, k -> new ArrayList<>()).add(t);
 		}
 		for (List<Trip> g : groups.values()) {
 			g.sort(Comparator.comparingInt(Trip::getSubtripId));

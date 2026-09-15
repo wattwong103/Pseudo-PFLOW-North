@@ -8,9 +8,10 @@ public class Trip {
 	private long depTime;
 	private ILonLat origin;
 	private ILonLat destination;
-	private int tripId;
+	private long tripId;
 	private int subtripId;
 	private ETransport repMode;
+	private long arrTime;
 
 	public Trip(ETransport transport, EPurpose purpose, long depTime, ILonLat origin, ILonLat destination) {
 		this.transport = transport;
@@ -45,12 +46,20 @@ public class Trip {
 		return destination;
 	}
 
-	public int getTripId() {
+	public long getTripId() {
 		return tripId;
 	}
 
-	public void setTripId(int tripId) {
+	public void setTripId(long tripId) {
 		this.tripId = tripId;
+	}
+
+	public long getArrTime() {
+		return arrTime;
+	}
+
+	public void setArrTime(long arrTime) {
+		this.arrTime = arrTime;
 	}
 
 	public int getSubtripId() {

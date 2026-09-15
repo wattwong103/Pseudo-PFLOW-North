@@ -61,10 +61,12 @@ MODE_TO_TARGET = {
 
 
 def read_trip_file(filepath):
-    """Read a 12-column trip CSV and return rows as tuples.
+    """Read a v3.3 12-column trip CSV (one row per trip).
 
     Returns list of (person_id, trip_id, subtip_id, rep_mode, transport,
                      o_lon, o_lat, d_lon, d_lat).
+    v3.3: col 6 is already representative mode; col 9 is unique trip_id;
+    cols 10/11 are arr_time and duration (not subtrip/repMode).
     """
     rows = []
     with open(filepath) as f:
@@ -75,8 +77,8 @@ def read_trip_file(filepath):
             person_id = int(line[0])
             transport = int(line[6])
             trip_id = int(line[9])
-            subtip_id = int(line[10])
-            rep_mode = int(line[11])
+            subtip_id = 0
+            rep_mode = transport
             o_lon = float(line[2])
             o_lat = float(line[3])
             d_lon = float(line[4])

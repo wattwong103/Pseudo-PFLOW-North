@@ -119,6 +119,7 @@ public class TripGenerator {
 				Trip t0 = new Trip(ETransport.NOT_DEFINED, EPurpose.HOME, 0, pre.getLocation(), pre.getLocation());
 				t0.setTripId(++tripCounter);
 				t0.setSubtripId(0);
+				t0.setArrTime(0);
 				person.addTrip(t0);
 			}else {
 				for (int i = 1; i < activities.size(); i++) {
@@ -167,6 +168,7 @@ public class TripGenerator {
 							Trip trip = new Trip(nextMode, purpose, depTime, oll, dll);
 							trip.setTripId(currentTripId);
 							trip.setSubtripId(0);
+							trip.setArrTime(depTime + travelTime);
 							person.addTrip(trip);
 						}else {
 							long travelTime = 0;
@@ -212,6 +214,7 @@ public class TripGenerator {
 							t2.setTripId(currentTripId); t2.setSubtripId(1); t2.setRepMode(repMode);
 							Trip t3 = new Trip(egrMode, purpose, depTime+time2, station2, dll);
 							t3.setTripId(currentTripId); t3.setSubtripId(2); t3.setRepMode(repMode);
+							t3.setArrTime(depTime + travelTime);
 							person.addTrip(t1);
 							person.addTrip(t2);
 							person.addTrip(t3);

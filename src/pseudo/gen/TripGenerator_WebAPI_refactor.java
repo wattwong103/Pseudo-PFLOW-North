@@ -558,6 +558,12 @@ public class TripGenerator_WebAPI_refactor {
 			}
 		}
 
+		private void stampTripId(List<SPoint> pts, long tripId) {
+			for (SPoint p : pts) {
+				p.setTripId(tripId);
+			}
+		}
+
 		private void addSubpoints(List<Node> nodes, Map<Node, Date> timeMap, ETransport nextMode, EPurpose purpose, List<SPoint> subpoints) {
 			for (ILonLat node : nodes) {
 				Date date = timeMap.get(node);
@@ -803,17 +809,22 @@ public class TripGenerator_WebAPI_refactor {
 					Trip trip = new Trip(ETransport.NOT_DEFINED, EPurpose.HOME, 0, pre.getLocation(), pre.getLocation());
 					trip.setTripId(++tripCounter);
 					trip.setSubtripId(0);
+					trip.setArrTime(0);
 					person.addTrip(trip);
 
 					Calendar cl = Calendar.getInstance();
 					Date startDate = new Date(0);
 					configureCalendar(cl, startDate);
 					startDate = cl.getTime();
-					points.add(new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), startDate, ETransport.NOT_DEFINED, EPurpose.HOME));
+					SPoint stay0 = new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), startDate, ETransport.NOT_DEFINED, EPurpose.HOME);
+					stay0.setTripId(trip.getTripId());
+					points.add(stay0);
 					Date endDate = new Date(86399000);
 					configureCalendar(cl, endDate);
 					endDate = cl.getTime();
-					points.add(new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), endDate, ETransport.NOT_DEFINED, EPurpose.HOME));
+					SPoint stay1 = new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), endDate, ETransport.NOT_DEFINED, EPurpose.HOME);
+					stay1.setTripId(trip.getTripId());
+					points.add(stay1);
 					person.addTrajectory(points);
 				} else {
 					for (int i = 1; i < activities.size(); i++) {
@@ -859,6 +870,8 @@ public class TripGenerator_WebAPI_refactor {
 								Trip trip = new Trip(nextMode, purpose, depTime, oll, dll);
 								trip.setTripId(currentTripId);
 								trip.setSubtripId(0);
+								trip.setArrTime(depTime + travelTime);
+								stampTripId(subpoints, currentTripId);
 								person.addTrip(trip);
 							} else if (nextMode == ETransport.MIX) {
 								if (mixedResultsHolder[0].path("features").get(0) == null) {
@@ -874,35 +887,50 @@ public class TripGenerator_WebAPI_refactor {
 									t.setSubtripId(s);
 									repMode = Trip.computeRepMode(repMode, t.getTransport());
 								}
+								if (!mixedTrips.isEmpty()) {
+									Trip lastLeg = mixedTrips.get(mixedTrips.size() - 1);
+									long mixedDep = mixedTrips.get(0).getDepTime();
+									long mixedTravel = mixedResultsHolder[0].path("total_time").asLong() * 60;
+									lastLeg.setArrTime(mixedDep + mixedTravel);
+								}
 								for (Trip t : mixedTrips) {
 									t.setRepMode(repMode);
 									person.addTrip(t);
 								}
+								stampTripId(subpoints, currentTripId);
 							} else {
 								Trip trip = new Trip(ETransport.NOT_DEFINED, next.getPurpose(), next.getStartTime(), pre.getLocation(), pre.getLocation());
 								trip.setTripId(currentTripId);
 								trip.setSubtripId(0);
+								trip.setArrTime(next.getStartTime());
 								person.addTrip(trip);
 								Calendar cl = Calendar.getInstance();
 								Date startDate = new Date(next.getStartTime());
 								configureCalendar(cl, startDate);
 								startDate = cl.getTime();
-								points.add(new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), startDate, ETransport.NOT_DEFINED, EPurpose.HOME));
+								SPoint nd0 = new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), startDate, ETransport.NOT_DEFINED, EPurpose.HOME);
+								nd0.setTripId(currentTripId);
+								points.add(nd0);
 								Date endDate = new Date(next.getStartTime() + 300);
 								configureCalendar(cl, endDate);
 								endDate = cl.getTime();
-								points.add(new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), endDate, ETransport.NOT_DEFINED, EPurpose.HOME));
+								SPoint nd1 = new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), endDate, ETransport.NOT_DEFINED, EPurpose.HOME);
+								nd1.setTripId(currentTripId);
+								points.add(nd1);
 							}
 						} else {
 							Trip trip = new Trip(ETransport.NOT_DEFINED, next.getPurpose(), next.getStartTime(), pre.getLocation(), pre.getLocation());
 							trip.setTripId(currentTripId);
 							trip.setSubtripId(0);
+							trip.setArrTime(next.getStartTime());
 							person.addTrip(trip);
 							Calendar cl = Calendar.getInstance();
 							Date startDate = new Date(next.getStartTime());
 							configureCalendar(cl, startDate);
 							startDate = cl.getTime();
-							points.add(new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), startDate, ETransport.NOT_DEFINED, next.getPurpose()));
+							SPoint z = new SPoint(pre.getLocation().getLon(), pre.getLocation().getLat(), startDate, ETransport.NOT_DEFINED, next.getPurpose());
+							z.setTripId(currentTripId);
+							points.add(z);
 						}
 
 						pre = next;

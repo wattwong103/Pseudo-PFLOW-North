@@ -11,6 +11,7 @@ Trajectory CSV columns (no header):
   6: purpose_id (int)
   7: labor_str (str, e.g. WORKER)
   8: link_id (str, may be empty)
+  9: trip_id (long, optional v3.3 — unique trip uid)
 """
 
 import csv
@@ -90,6 +91,9 @@ def validate_file(filepath):
     missing_links = 0
     duplicate_rows = 0
     seen_rows = set()
+    trip_ids = set()
+    zero_trip_ids = 0
+    has_trip_id = False
 
     for row in rows:
         try:
@@ -99,6 +103,13 @@ def validate_file(filepath):
             lat = float(row[4])
             transport = int(row[5])
             link_id = row[8].strip() if len(row) > 8 else ""
+            trip_id = 0
+            if len(row) >= 10:
+                has_trip_id = True
+                trip_id = int(row[9])
+                trip_ids.add(trip_id)
+                if trip_id == 0:
+                    zero_trip_ids += 1
         except (ValueError, IndexError):
             parse_errors += 1
             continue
@@ -132,6 +143,11 @@ def validate_file(filepath):
     result["stats"]["transport_distribution"] = {
         TRANSPORT_NAMES.get(k, str(k)): v for k, v in sorted(transport_counter.items())
     }
+    if has_trip_id:
+        result["stats"]["distinct_trip_ids"] = len(trip_ids)
+        result["stats"]["zero_trip_id_rows"] = zero_trip_ids
+        if zero_trip_ids == row_count:
+            result["warnings"].append("all waypoints have trip_id=0")
 
     # Per-person checks: timestamp monotonicity, spatial jumps, speed
     time_violations = 0

@@ -7,9 +7,13 @@ import java.io.FileWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.Random;
 import java.util.TimeZone;
@@ -31,6 +35,10 @@ public class PersonAccessor{
 	
 	private static final String DATE_FORMAT = "yyyy-MM-dd HH:mm:ss";
 	private static final long DAY_OF_DATE = 1601478000L;  //2020-10-01 00:00:00
+	private static final long DAY_SECONDS = 86400L;
+	private static final long TRIP_SEQ_MODULUS = 1000L;
+	private static final int MAX_TRIPS_PER_PERSON = 999;
+	private static final double STAY_HOME_COORD_EPS = 1e-8;
 
 	
 	public static List<HouseHold> load(String filename, int mfactor) {
@@ -187,30 +195,113 @@ public class PersonAccessor{
 		writeTrips(filename, data, false);
 	}
 
+	public static long encodeTripId(long personId, int seq) {
+		if (seq < 1 || seq > MAX_TRIPS_PER_PERSON) {
+			throw new IllegalStateException(
+					"Person " + personId + " trip seq " + seq + " exceeds ceiling " + MAX_TRIPS_PER_PERSON);
+		}
+		return personId * TRIP_SEQ_MODULUS + seq;
+	}
+
+	/**
+	 * Collapse in-memory legs into one row per logical trip and assign
+	 * {@code trip_id = person_id * 1000 + seq} (seq is 1-based, dep-time order).
+	 */
+	public static List<CollapsedTrip> collapseTrips(Person person) {
+		List<Trip> legs = person.listTrips();
+		Map<Long, List<Trip>> groups = new LinkedHashMap<>();
+		for (Trip t : legs) {
+			groups.computeIfAbsent(t.getTripId(), k -> new ArrayList<>()).add(t);
+		}
+		for (List<Trip> g : groups.values()) {
+			g.sort(Comparator.comparingInt(Trip::getSubtripId));
+		}
+		List<List<Trip>> ordered = new ArrayList<>(groups.values());
+		ordered.sort(Comparator.comparingLong(g -> g.get(0).getDepTime()));
+		if (ordered.size() > MAX_TRIPS_PER_PERSON) {
+			throw new IllegalStateException(
+					"Person " + person.getId() + " has " + ordered.size()
+					+ " trips; seq must be < " + TRIP_SEQ_MODULUS);
+		}
+
+		List<CollapsedTrip> out = new ArrayList<>(ordered.size());
+		int n = ordered.size();
+		for (int i = 0; i < n; i++) {
+			List<Trip> g = ordered.get(i);
+			Trip first = g.get(0);
+			Trip last = g.get(g.size() - 1);
+			int seq = i + 1;
+			long uid = encodeTripId(person.getId(), seq);
+			long dep = first.getDepTime();
+			long nextDep = (i + 1 < n) ? ordered.get(i + 1).get(0).getDepTime() : DAY_SECONDS;
+			long duration = Math.max(0L, nextDep - dep);
+
+			ETransport mode = last.getRepMode();
+			if (mode == null || mode == ETransport.MIX) {
+				mode = ETransport.NOT_DEFINED;
+				for (Trip t : g) {
+					mode = Trip.computeRepMode(mode, t.getTransport());
+				}
+			}
+			if (mode == ETransport.MIX) {
+				mode = ETransport.TRAIN;
+			}
+
+			long arr = last.getArrTime();
+			boolean fallback = false;
+			if (arr == 0L && !isStayHome(first, last)) {
+				arr = dep;
+				fallback = true;
+			}
+
+			out.add(new CollapsedTrip(
+					person.getId(), uid, first.getTripId(),
+					dep, arr, duration,
+					first.getOrigin(), last.getDestination(),
+					mode, last.getPurpose(), person.getLabor(),
+					fallback));
+		}
+		return out;
+	}
+
+	private static boolean isStayHome(Trip first, Trip last) {
+		double dlon = first.getOrigin().getLon() - last.getDestination().getLon();
+		double dlat = first.getOrigin().getLat() - last.getDestination().getLat();
+		return Math.abs(dlon) < STAY_HOME_COORD_EPS
+				&& Math.abs(dlat) < STAY_HOME_COORD_EPS
+				&& first.getTransport() == ETransport.NOT_DEFINED;
+	}
+
 	public static void writeTrips(String filename, List<Person> data, boolean append) {
+		boolean warnedArr = false;
 		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename, append));){
 			for (Person p : data) {
-				List<Trip> trips = p.listTrips();
-				for (int i = 0; i < trips.size(); i++) {
-					Trip trip = trips.get(i);
-					ILonLat o = trip.getOrigin();
-					ILonLat d = trip.getDestination();
+				List<CollapsedTrip> collapsed = collapseTrips(p);
+				for (CollapsedTrip trip : collapsed) {
+					if (trip.arrTimeFallback && !warnedArr) {
+						System.err.println("PersonAccessor.writeTrips: arrTime missing on moving trips; using depTime (zero travel). " + filename);
+						warnedArr = true;
+					}
+					ILonLat o = trip.origin;
+					ILonLat d = trip.destination;
 					bw.write(
 						String.format("%d,%d,%f,%f,%f,%f,%d,%d,%d,%d,%d,%d",
-								p.getId(),
-								trip.getDepTime(),
+								trip.personId,
+								trip.depTime,
 								o.getLon(), o.getLat(),
 								d.getLon(), d.getLat(),
-								trip.getTransport().getId(),
-								trip.getPurpose().getId(),
-								p.getLabor().getId(),
-								trip.getTripId(),
-								trip.getSubtripId(),
-								trip.getRepMode().getId()
+								trip.mode.getId(),
+								trip.purpose.getId(),
+								trip.labor.getId(),
+								trip.tripId,
+								trip.arrTime,
+								trip.duration
 							));
 					bw.newLine();
 				}
 			}
+		} catch (IllegalStateException e) {
+			throw e;
 		} catch (Exception e) {
 			throw new RuntimeException("Failed to write trips: " + filename, e);
 		}
@@ -222,35 +313,36 @@ public class PersonAccessor{
 		try (BufferedReader br = new BufferedReader(new FileReader(filename));){
             String line = null;
             Person person = null;
-            int preId = 0;
+            long preId = 0;
             while ((line = br.readLine()) != null) {
             	String[] items = line.split(",");
             	if (items.length < 9) {
             		System.err.println("PersonAccessor.loadTrips: skipping short row (" + items.length + " cols): " + line);
             		continue;
             	}
-            	int nextId = Integer.valueOf(items[0]);
+            	long nextId = Long.parseLong(items[0]);
 
-            	long depTime = Long.valueOf(items[1]);
-            	double lon1 = Double.valueOf(items[2]);
-            	double lat1 = Double.valueOf(items[3]);
-            	double lon2 = Double.valueOf(items[4]);
-            	double lat2 = Double.valueOf(items[5]);
+            	long depTime = Long.parseLong(items[1]);
+            	double lon1 = Double.parseDouble(items[2]);
+            	double lat1 = Double.parseDouble(items[3]);
+            	double lon2 = Double.parseDouble(items[4]);
+            	double lat2 = Double.parseDouble(items[5]);
 
-            	ETransport mode = ETransport.getType(Integer.valueOf(items[6]));
-            	EPurpose purpose = EPurpose.getType(Integer.valueOf(items[7]));
-            	ELabor labor = ELabor.getType(Integer.valueOf(items[8]));
+            	ETransport mode = ETransport.getType(Integer.parseInt(items[6]));
+            	EPurpose purpose = EPurpose.getType(Integer.parseInt(items[7]));
+            	ELabor labor = ELabor.getType(Integer.parseInt(items[8]));
 
-            	if (nextId != preId) {
+            	if (person == null || nextId != preId) {
             		person = new Person(null, nextId, 0, EGender.MALE, labor);
             		res.add(person);
             	}
 
             	Trip trip = new Trip(mode, purpose, depTime, new LonLat(lon1,lat1), new LonLat(lon2,lat2));
             	if (items.length >= 12) {
-            		trip.setTripId(Integer.valueOf(items[9]));
-            		trip.setSubtripId(Integer.valueOf(items[10]));
-            		trip.setRepMode(ETransport.getType(Integer.valueOf(items[11])));
+            		trip.setTripId(Long.parseLong(items[9]));
+            		trip.setArrTime(Long.parseLong(items[10]));
+            		trip.setSubtripId(0);
+            		trip.setRepMode(mode);
             	}
             	person.addTrip(trip);
 
@@ -260,6 +352,40 @@ public class PersonAccessor{
             throw new RuntimeException("Failed to load trips: " + filename, e);
         }
 		return res;
+	}
+
+	public static final class CollapsedTrip {
+		public final long personId;
+		public final long tripId;
+		public final long generatorTripId;
+		public final long depTime;
+		public final long arrTime;
+		public final long duration;
+		public final ILonLat origin;
+		public final ILonLat destination;
+		public final ETransport mode;
+		public final EPurpose purpose;
+		public final ELabor labor;
+		public final boolean arrTimeFallback;
+
+		CollapsedTrip(long personId, long tripId, long generatorTripId,
+				long depTime, long arrTime, long duration,
+				ILonLat origin, ILonLat destination,
+				ETransport mode, EPurpose purpose, ELabor labor,
+				boolean arrTimeFallback) {
+			this.personId = personId;
+			this.tripId = tripId;
+			this.generatorTripId = generatorTripId;
+			this.depTime = depTime;
+			this.arrTime = arrTime;
+			this.duration = duration;
+			this.origin = origin;
+			this.destination = destination;
+			this.mode = mode;
+			this.purpose = purpose;
+			this.labor = labor;
+			this.arrTimeFallback = arrTimeFallback;
+		}
 	}
 	
 	
@@ -292,6 +418,9 @@ public class PersonAccessor{
 
             	SPoint point = new SPoint(lon, lat, new Date(time), mode, purpose);
             	point.setLink(link);
+            	if (items.length >= 10) {
+            		point.setTripId(Long.parseLong(items[9]));
+            	}
             	person.addTrajectory(point);
 
             	preId = nextId;
@@ -311,6 +440,12 @@ public class PersonAccessor{
 
 		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename, append));){
 			for (Person person : persons) {
+				Map<Long, Long> genToUid = new HashMap<>();
+				if (person.listTrips() != null && !person.listTrips().isEmpty()) {
+					for (CollapsedTrip c : collapseTrips(person)) {
+						genToUid.put(c.generatorTripId, c.tripId);
+					}
+				}
 				List<SPoint> points = person.getTrajectory();
 				if (points != null) {
 					for (int i = 0; i < points.size(); i++) {
@@ -318,9 +453,10 @@ public class PersonAccessor{
 						String link = p.getLink();
 						long unixtime = p.getTimeStamp().getTime();
 						String date = sfd.format(unixtime);
+						long uid = genToUid.getOrDefault(p.getTripId(), p.getTripId());
 
 						bw.write(
-								String.format("%d,%d,%s,%f,%f,%d,%d,%s,%s",
+								String.format("%d,%d,%s,%f,%f,%d,%d,%s,%s,%d",
 									person.getId(),
 									// time.getTime(),
 									unixtime,
@@ -331,7 +467,8 @@ public class PersonAccessor{
 									p.getTransport().getId(),
 									p.getPurpose().getId(),
 									person.getLabor(),
-									link != null ? link : ""
+									link != null ? link : "",
+									uid
 									));
 						bw.newLine();
 					}

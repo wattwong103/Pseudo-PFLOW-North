@@ -35,6 +35,7 @@ FORMAT
                        (... trip_id, subtrip_id, rep_mode). The v3.3 12-column layout
                        ends differently (trip_id, arr_time, duration); column count
                        cannot tell them apart, so that layout has no key here yet.
+  Source size and mtime are re-checked after the last copy; a file that changed aborts the release.
   Gates, checked on the copied files; any failure aborts and leaves no release:
     columns       every non-empty row has the expected number of fields
     pid_coverage  every pid in a city's trip file is a person_id in that city's person file
@@ -103,11 +104,11 @@ def _check_meta(meta: dict, name: str) -> None:
     unknown = [k for k in meta if k not in REQUIRED_META and k not in OPTIONAL_META]
     if unknown:
         raise ValueError(f"unknown meta field(s): {', '.join(unknown)}")
-    if meta["row_semantics"] not in TRIP_COLUMNS:
+    if not isinstance(meta["row_semantics"], str) or meta["row_semantics"] not in TRIP_COLUMNS:
         raise ValueError(f"row_semantics {meta['row_semantics']!r} is not one of {sorted(TRIP_COLUMNS)}")
     area, pct = meta["area"], meta["sample_pct"]
-    if not (isinstance(area, list) and len(set(area)) == len(area)
-            and all(isinstance(c, str) and CITY_RE.fullmatch(c) for c in area)):
+    if not (isinstance(area, list) and all(isinstance(c, str) and CITY_RE.fullmatch(c) for c in area)
+            and len(set(area)) == len(area)):
         raise ValueError("meta area must be a list of distinct 5-digit city codes")
     if isinstance(pct, bool) or not isinstance(pct, int) or not 1 <= pct <= 100:
         raise ValueError(f"meta sample_pct must be an integer from 1 to 100, got {pct!r}")
@@ -181,9 +182,15 @@ def _write_text(path: Path, text: str) -> None:
 
 
 def _clear_read_only_and_retry(func, path, _exc) -> None:
-    """rmtree error handler: copy2 keeps the read-only bit, which blocks deletes on Windows."""
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
+    """rmtree error handler: copy2 keeps the read-only bit, which blocks deletes on Windows.
+
+    A file that still cannot be removed (locked) must not stop the walk over the others.
+    """
+    try:
+        os.chmod(path, os.stat(path).st_mode | stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass
 
 
 def _remove_partial(partial: Path) -> None:
@@ -217,6 +224,27 @@ def _copy_into(partial: Path, kind: str, files: dict) -> None:
         dst = partial / kind / city[:2] / src.name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+
+
+def _snapshot(*file_maps: dict) -> dict:
+    """{source path: (size, mtime_ns)} for every file the release will include."""
+    snapshot = {}
+    for files in file_maps:
+        for src in files.values():
+            st = src.stat()
+            snapshot[src] = (st.st_size, st.st_mtime_ns)
+    return snapshot
+
+
+def _check_unchanged(snapshot: dict) -> None:
+    for src, before in snapshot.items():
+        try:
+            st = src.stat()
+            after = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            after = None  # vanished
+        if after != before:
+            raise ValueError(f"source changed during release: {src.name}")
 
 
 def _check_copies(partial: Path, person_files: dict, trip_files: dict, semantics: str):
@@ -295,8 +323,10 @@ def build_release(person_dir: Path, trip_dir: Path, releases_dir: Path, name: st
     releases_dir.mkdir(parents=True, exist_ok=True)
     partial.mkdir()
     try:
+        sources = _snapshot(person_files, trip_files)
         _copy_into(partial, "person", person_files)
         _copy_into(partial, "trip", trip_files)
+        _check_unchanged(sources)
         persons, trips = _check_copies(partial, person_files, trip_files, meta["row_semantics"])
         sidecar = _sidecar(location, meta, len(person_files), len(trip_files), persons, trips)
         _write_text(partial / SIDECAR, json.dumps(sidecar, indent=2, ensure_ascii=False) + "\n")

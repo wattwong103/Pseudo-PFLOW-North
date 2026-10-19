@@ -432,3 +432,72 @@ def test_build_leaves_sources_untouched(tmp_path):
     before = _snapshot(p, t)
     build_release(p, t, tmp_path / "releases", NAME, july_meta())
     assert _snapshot(p, t) == before
+
+
+# --- Fix round 2: sources that change mid-release, cleanup past a locked file, unhashable meta. ---
+
+@pytest.mark.parametrize("how, after_copy", [
+    ("append", 1),  # size and mtime change
+    ("append-keep-mtime", 1),  # size only
+    ("touch", 1),  # mtime only
+    ("delete", 4),  # vanished after the last copy
+])
+def test_refuses_source_that_changes_during_copy(tmp_path, monkeypatch, how, after_copy):
+    p, t = make_run(tmp_path)
+    target = t / "trip_13101.csv"
+    real, calls = shutil.copy2, {"n": 0}
+
+    def copy_then_disturb(src, dst, *a, **k):
+        result = real(src, dst, *a, **k)
+        calls["n"] += 1
+        if calls["n"] == after_copy:
+            before = target.stat()
+            if how == "delete":
+                target.unlink()
+            else:
+                if how.startswith("append"):
+                    with open(target, "a") as f:
+                        f.write("1,0,0,0,0,0,0,0,0\n")
+                bump = 0 if how == "append-keep-mtime" else 2_000_000_000
+                os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns + bump))
+        return result
+
+    monkeypatch.setattr(shutil, "copy2", copy_then_disturb)
+    with pytest.raises(ValueError, match="source changed during release: trip_13101.csv"):
+        build_release(p, t, tmp_path / "releases", NAME, july_meta())
+    assert _no_release(tmp_path)
+
+
+def test_cleanup_continues_past_a_locked_file(tmp_path, monkeypatch, capsys):
+    p, t = make_run(tmp_path, trip_cols=12)
+    real_unlink = os.unlink
+
+    def unlink(path, *a, **k):
+        if str(path).endswith("trip_13101.csv"):
+            raise PermissionError(13, "Access is denied")
+        return real_unlink(path, *a, **k)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    with pytest.raises(ValueError, match="trip_13101.csv has 12 columns"):
+        build_release(p, t, tmp_path / "releases", NAME, july_meta())
+    partial = tmp_path / "releases" / (NAME + ".partial")
+    assert (partial / "trip/13/trip_13101.csv").exists()  # the locked one stays
+    assert not (partial / "trip/13/trip_13102.csv").exists()  # the walk went on
+    assert not (partial / "person").exists()
+    assert str(partial) in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("change", [
+    {"area": [["13101"]]},
+    {"area": [{"code": "13101"}]},
+    {"row_semantics": ["v2_9col"]},
+    {"row_semantics": {"v2_9col": 1}},
+])
+def test_cli_refuses_unhashable_meta_values(tmp_path, capsys, change):
+    p, t = make_run(tmp_path)
+    meta_path = tmp_path / "meta.json"
+    meta_path.write_text(json.dumps({**july_meta(), **change}))
+    rc = main(["--person-dir", str(p), "--trip-dir", str(t), "--releases", str(tmp_path / "releases"),
+               "--name", NAME, "--meta", str(meta_path)])
+    assert rc == 1 and "refused" in capsys.readouterr().err
+    assert _no_release(tmp_path)

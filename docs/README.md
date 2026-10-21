@@ -17,5 +17,6 @@ architecture reference (auto-loaded by Claude Code) is `Pseudo-PFLOW/CLAUDE.md`.
 
 These docs describe files **only under `Pseudo-PFLOW/`**. Input data
 (`${PFLOW_HOME}/data/...`), companion scripts (`${PFLOW_HOME}/scripts/...`),
-and the journal/internal LaTeX papers (`${PFLOW_HOME}/docs/...`) live outside
+and the journal/internal LaTeX papers and documents (`${PFLOW_HOME}/20_taxi/papers/...`,
+`${PFLOW_HOME}/20_taxi/docs/...`) live outside
 this Git repository and are referenced by env-var path only.

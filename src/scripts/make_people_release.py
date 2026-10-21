@@ -41,6 +41,11 @@ FORMAT
     pid_coverage  every pid in a city's trip file is a person_id in that city's person file
   The caller supplies REQUIRED_META (plus optional "anomalies", "updates"); the tool
   computes date, lane, location, columns, totals and gates. Pure stdlib.
+  totals = person_files, trip_files, persons, trip_persons, trips. persons is the sum over
+  cities of distinct person_id in the person files; trip_persons is the sum over cities of
+  distinct trip pids (persons with at least one trip, so trip_persons <= persons); trips is
+  the number of trip rows. trip_persons uses the name of gufm's era_sidecar.json totals; it
+  exists only in releases cut with this field (earlier releases do not carry it).
   meta["area"] is the list of 5-digit city codes and must equal the cities found in the
   source dirs; meta["sample_pct"] is an int from 1 to 100. location is
   <releases parent folder>/<releases folder>/<name>, e.g. 10_people/releases/<name>.
@@ -248,12 +253,13 @@ def _check_unchanged(snapshot: dict) -> None:
 
 
 def _check_copies(partial: Path, person_files: dict, trip_files: dict, semantics: str):
-    """Run the columns and pid_coverage gates on the copied files; return (persons, trip rows).
+    """Run the columns and pid_coverage gates on the copied files.
 
-    persons is the sum of per-city distinct person ids (person_id is globally unique in the
-    generator output), so no set of all ids is held in memory.
+    Return (persons, trip_persons, trip rows). persons and trip_persons are sums of per-city
+    distinct counts (person_id is globally unique in the generator output), so no set of all
+    ids is held in memory. trip_persons counts the persons that have at least one trip.
     """
-    persons, trips = 0, 0
+    persons, trip_persons, trips = 0, 0, 0
     for city in sorted(person_files):
         _, person_ids = _scan(partial / "person" / city[:2] / person_files[city].name,
                               len(PERSON_COLUMNS), PERSON_PID_INDEX, "expected")
@@ -264,11 +270,13 @@ def _check_copies(partial: Path, person_files: dict, trip_files: dict, semantics
             raise ValueError(f"{city}: {len(unknown)} trip pid(s) not in {person_files[city].name}, "
                              f"e.g. {sorted(unknown)[:3]}")
         persons += len(person_ids)
+        trip_persons += len(trip_pids)
         trips += n_trips
-    return persons, trips
+    return persons, trip_persons, trips
 
 
-def _sidecar(location: str, meta: dict, n_person_files: int, n_trip_files: int, persons: int, trips: int) -> dict:
+def _sidecar(location: str, meta: dict, n_person_files: int, n_trip_files: int,
+             persons: int, trip_persons: int, trips: int) -> dict:
     sidecar = {
         "era": meta["era"],
         "date": datetime.date.today().isoformat(),
@@ -282,7 +290,7 @@ def _sidecar(location: str, meta: dict, n_person_files: int, n_trip_files: int, 
         "row_semantics": meta["row_semantics"],
         "columns": {"person": PERSON_COLUMNS, "trip": TRIP_COLUMNS[meta["row_semantics"]]},
         "totals": {"person_files": n_person_files, "trip_files": n_trip_files,
-                   "persons": persons, "trips": trips},
+                   "persons": persons, "trip_persons": trip_persons, "trips": trips},
         "gates": {"columns": "PASS", "pid_coverage": "PASS"},
     }
     if "anomalies" in meta:
@@ -327,8 +335,8 @@ def build_release(person_dir: Path, trip_dir: Path, releases_dir: Path, name: st
         _copy_into(partial, "person", person_files)
         _copy_into(partial, "trip", trip_files)
         _check_unchanged(sources)
-        persons, trips = _check_copies(partial, person_files, trip_files, meta["row_semantics"])
-        sidecar = _sidecar(location, meta, len(person_files), len(trip_files), persons, trips)
+        persons, trip_persons, trips = _check_copies(partial, person_files, trip_files, meta["row_semantics"])
+        sidecar = _sidecar(location, meta, len(person_files), len(trip_files), persons, trip_persons, trips)
         _write_text(partial / SIDECAR, json.dumps(sidecar, indent=2, ensure_ascii=False) + "\n")
         _write_manifest(partial)
         problems = verify_release(partial)

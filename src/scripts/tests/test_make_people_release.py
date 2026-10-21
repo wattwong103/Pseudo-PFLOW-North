@@ -83,7 +83,7 @@ def test_build_release_copies_files_and_writes_sidecar(tmp_path):
     assert (rel / "person/13/person_13101.csv").exists() and (rel / "trip/13/trip_13102.csv").exists()
     side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
     assert side["lane"] == "cheap" and side["era"] == "v3.1-gufm-20260709"
-    assert side["totals"] == {"person_files": 2, "trip_files": 2, "persons": 3, "trips": 3}
+    assert side["totals"] == {"person_files": 2, "trip_files": 2, "persons": 3, "trip_persons": 3, "trips": 3}
     assert side["columns"] == {"person": PERSON_COLUMNS, "trip": TRIP_COLUMNS["v2_9col"]}
     assert side["gates"]["pid_coverage"] == "PASS" and side["gates"]["columns"] == "PASS"
     assert verify_release(rel) == []
@@ -373,6 +373,25 @@ def test_persons_total_is_sum_of_per_city_counts(tmp_path):
     rel = build_release(p, t, tmp_path / "releases", NAME, july_meta())
     side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
     assert side["totals"]["persons"] == 3
+
+
+def test_trip_persons_total_counts_distinct_trip_pids_per_city(tmp_path):
+    # 13101: pid 1 has two trips, pid 2 has one; 13102: pid 3 has one -> 3 distinct trip pids
+    p, t = make_run(tmp_path, trips={"13101": [1, 1, 2], "13102": [3]})
+    rel = build_release(p, t, tmp_path / "releases", NAME, july_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["totals"]["trip_persons"] == 3
+    assert side["totals"]["trips"] == 4
+
+
+def test_trip_persons_is_less_than_persons_when_a_person_has_no_trip(tmp_path):
+    # persons 1, 2, 3 and 4 exist; only 1 (13101) and 3 (13102) travel
+    p, t = make_run(tmp_path, persons={"13101": [1, 2], "13102": [3, 4]},
+                    trips={"13101": [1], "13102": [3]})
+    rel = build_release(p, t, tmp_path / "releases", NAME, july_meta())
+    totals = json.loads((rel / "release.json").read_text(encoding="utf-8"))["totals"]
+    assert totals["persons"] == 4 and totals["trip_persons"] == 2
+    assert totals["trip_persons"] < totals["persons"]
 
 
 def test_verify_reports_duplicate_manifest_entry(tmp_path):

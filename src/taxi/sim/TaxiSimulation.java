@@ -1112,9 +1112,13 @@ public class TaxiSimulation {
         if (geoValidator == null || !geoValidator.isOperatingZoneEnabled()) return;
         List<String> ineligible = new ArrayList<>();
         int eligibleHubs = 0;
+        int hubsInFile = 0;
         for (DestinationZone zone : destinationZones) {
+            if (zone.isTransportHub()) hubsInFile++;
+            // The anchor search must accept a point only if it is valid AND in the zone.
             boolean ok = assignAnchor(zone, geoValidator::isInOperatingZone, this::isValidLocation,
-                (lon, lat) -> projectToNearestValidCell(lon, lat, ANCHOR_SEARCH_RADIUS_KM));
+                (lon, lat) -> spiralSearch(lon, lat, ANCHOR_SEARCH_RADIUS_KM,
+                    (x, y) -> isValidLocation(x, y) && geoValidator.isInOperatingZone(x, y)));
             zone.setServiceEligible(ok);
             if (!ok) {
                 ineligible.add(zone.getZoneId() + " " + zone.getName());
@@ -1132,6 +1136,7 @@ public class TaxiSimulation {
         }
         System.out.println("[ZONE] Service-eligible zones: " + (destinationZones.size() - ineligible.size())
             + " of " + destinationZones.size() + " (" + eligibleHubs + " hubs); ineligible: " + ineligible);
+        checkEligibility(destinationZones.size() - ineligible.size(), hubsInFile, eligibleHubs);
     }
 
     /**
@@ -1229,6 +1234,16 @@ public class TaxiSimulation {
         if (geoValidator.isValidLocation(lon, lat)) {
             return new double[]{lon, lat};  // already valid (defensive)
         }
+        return spiralSearch(lon, lat, radiusKm, geoValidator::isValidLocation);
+    }
+
+    /**
+     * Nearest acceptable point on rings of 50 m steps x 8 bearings (0 = east,
+     * counter-clockwise) out to radiusKm; null if none. The start point itself
+     * is not tested. Deterministic, no random draws.
+     */
+    static double[] spiralSearch(double lon, double lat, double radiusKm,
+                                 java.util.function.BiPredicate<Double, Double> acceptable) {
         final double STEP_KM = 0.05;       // 50 m grid spacing
         final int ANGULAR_SAMPLES = 8;     // 45° apart
         final double cosLat = Math.cos(Math.toRadians(lat));
@@ -1243,12 +1258,26 @@ public class TaxiSimulation {
                 double dLat = (r * Math.sin(bearing)) / 111.32;
                 double candLon = lon + dLon;
                 double candLat = lat + dLat;
-                if (geoValidator.isValidLocation(candLon, candLat)) {
+                if (acceptable.test(candLon, candLat)) {
                     return new double[]{candLon, candLat};
                 }
             }
         }
-        return null;  // no valid cell within radius
+        return null;  // no acceptable cell within radius
+    }
+
+    /**
+     * WP0 fail-fast: with an operating zone, at least one zone must be eligible
+     * (deadhead fallback), and if the file has hubs, at least one hub must be
+     * eligible (otherwise every stand roll silently becomes DUAL_MODE).
+     */
+    static void checkEligibility(int eligibleZones, int hubsInFile, int eligibleHubs) {
+        if (eligibleZones == 0) {
+            throw new IllegalStateException("No destination zone is service-eligible in the operating zone");
+        }
+        if (hubsInFile > 0 && eligibleHubs == 0) {
+            throw new IllegalStateException(hubsInFile + " transport hubs configured but none is service-eligible");
+        }
     }
 
     /**

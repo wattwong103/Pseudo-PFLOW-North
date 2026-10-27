@@ -565,19 +565,21 @@ class ShiftSimulator {
     }
 
     /**
-     * Roulette pick for r in [0, sum(scores)). Zero-score zones are never
-     * returned, not even when r falls exactly on a cumulative boundary.
+     * Roulette pick for r in [0, sum(scores)). Ineligible zones (outside the
+     * operating zone) are skipped and can never be returned; eligible zones
+     * follow the pre-WP0 loop exactly, including its last-zone fallback, so a
+     * run without an operating zone (all zones eligible) is unchanged.
      */
     static DestinationZone rouletteZone(List<DestinationZone> zones, double[] scores, double r) {
         double cumulative = 0.0;
-        DestinationZone lastPositive = null;
+        DestinationZone lastEligible = null;
         for (int i = 0; i < zones.size(); i++) {
-            if (scores[i] <= 0) continue;
+            if (!zones.get(i).isServiceEligible()) continue;
             cumulative += scores[i];
-            lastPositive = zones.get(i);
-            if (r <= cumulative) return lastPositive;
+            lastEligible = zones.get(i);
+            if (r <= cumulative) return lastEligible;
         }
-        return lastPositive;
+        return lastEligible;
     }
 
     /**

@@ -26,6 +26,7 @@ final class TaxiValidationTiers {
 
     static final String ZONE_PICKUPS = "Pickups Within Operating Zone";
     static final String ZONE_BOTH_OUTSIDE = "Both Ends Outside Operating Zone";
+    static final String ZONE_NOT_APPLICABLE = "n/a (operating zone disabled)";
     static final double ZONE_PICKUPS_MIN_PCT = 99.0;
     static final double ZONE_BOTH_OUTSIDE_MAX_PCT = 0.5;
 
@@ -101,7 +102,7 @@ final class TaxiValidationTiers {
             double[] ref = baseline.get(def.metric);
             if (zoneRow && !zoneEnabled) {
                 rows.add(new TierRow(def.tier, def.metric, Double.NaN, def.bound, Double.NaN,
-                    "INFO", def.definition, "n/a (operating zone disabled)"));
+                    "INFO", def.definition, ZONE_NOT_APPLICABLE));
                 continue;
             }
             Double actual = metrics.get(def.metric);
@@ -149,19 +150,32 @@ final class TaxiValidationTiers {
         }
     }
 
-    /** "Tier A: x/y hold; Tier B: k/n within tolerance" over graded rows. */
+    /**
+     * "Tier A: p/n hold; Tier B: p/n within THTA tolerance; operating zone on|off[; not graded: ...]".
+     * The denominator is every defined row of the tier that applies to the run
+     * (zone rows drop out only when the zone is off), so a row that is missing
+     * or has no baseline target counts against the bar instead of vanishing.
+     */
     static String summary(List<TierRow> rows) {
-        return "Tier A: " + count(rows, "A", "PASS") + "/" + graded(rows, "A") + " hold; Tier B: "
-            + count(rows, "B", "PASS") + "/" + graded(rows, "B") + " within THTA tolerance";
+        boolean zoneOn = rows.stream().noneMatch(r -> r.note.equals(ZONE_NOT_APPLICABLE));
+        List<String> notGraded = new ArrayList<>();
+        for (TierRow r : rows) {
+            if ((r.tier.equals("A") || r.tier.equals("B"))
+                    && (r.status.equals("MISSING") || r.status.equals("NO_TARGET"))) {
+                notGraded.add(r.metric);
+            }
+        }
+        return "Tier A: " + count(rows, "A", "PASS") + "/" + applicable(rows, "A") + " hold; Tier B: "
+            + count(rows, "B", "PASS") + "/" + applicable(rows, "B") + " within THTA tolerance; operating zone "
+            + (zoneOn ? "on" : "off") + (notGraded.isEmpty() ? "" : "; not graded: " + String.join(", ", notGraded));
     }
 
     private static long count(List<TierRow> rows, String tier, String status) {
         return rows.stream().filter(r -> r.tier.equals(tier) && r.status.equals(status)).count();
     }
 
-    private static long graded(List<TierRow> rows, String tier) {
-        return rows.stream().filter(r -> r.tier.equals(tier)
-            && (r.status.equals("PASS") || r.status.equals("FAIL"))).count();
+    private static long applicable(List<TierRow> rows, String tier) {
+        return rows.stream().filter(r -> r.tier.equals(tier) && !r.note.equals(ZONE_NOT_APPLICABLE)).count();
     }
 
     private static String num(double v) {

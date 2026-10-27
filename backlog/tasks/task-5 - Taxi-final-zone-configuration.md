@@ -4,7 +4,7 @@ title: >-
   Taxi camera-ready PR-A: zone coordinates from the audit, six added zones, circle-area e-Stat density
 status: In Progress
 assignee: []
-created_date: '2026-10-29 00:00'
+created_date: '2026-10-28 00:00'
 labels:
   - taxi
   - calibration

@@ -22,6 +22,8 @@ import org.junit.jupiter.api.Test;
 class ZonesCsvIntegrityTest {
 
     static final String ZONES = "config/taxi/tokyo/zones.csv";
+    /** TaxiSimulation's zone loader skips any line that does not split into exactly this many columns. */
+    static final int LOADER_COLUMNS = 11;
     static final double KM_PER_DEG = 111.32;
     static final double MIN_CENTRE_SEPARATION_M = 100.0;
     static final int TRANSPORT_HUBS = 18;
@@ -32,17 +34,22 @@ class ZonesCsvIntegrityTest {
     @BeforeAll
     static void load() throws IOException {
         List<String> lines = Files.readAllLines(Paths.get(ZONES), StandardCharsets.UTF_8);
-        header = List.of(lines.get(0).split(",", -1));
+        header = List.of(lines.get(0).trim().split(","));
         rows = new ArrayList<>();
         for (String line : lines.subList(1, lines.size())) {
-            if (!line.isBlank()) rows.add(line.split(",", -1));
+            // Parse exactly as TaxiSimulation's loader does: trim, skip blanks and comments, split(",").
+            // split(",") drops trailing empty fields, so a row ending in "," has fewer than 11 columns.
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            rows.add(t.split(","));
         }
     }
 
     @Test
-    void everyRowHasTheHeadersFieldCount() {
+    void everyRowSplitsIntoTheLoadersColumnCount() {
+        assertEquals(LOADER_COLUMNS, header.size(), "header");
         for (String[] r : rows) {
-            assertEquals(header.size(), r.length, "row " + r[0]);
+            assertEquals(LOADER_COLUMNS, r.length, "row " + r[0] + " would be skipped by the zone loader");
         }
     }
 

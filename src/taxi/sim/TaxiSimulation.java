@@ -1,6 +1,7 @@
 package taxi.sim;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -93,6 +94,8 @@ public class TaxiSimulation {
 
     /** B7: per-cycle diagnostic CSV writer (no-op when disabled). */
     private DiagnosticWriter diagnosticWriter;
+    /** WP0: empty-leg path decomposition from the shift simulator (dashboard). */
+    private EmptyLegStats emptyLegStats;
     /** B7: pre-computed stratified sample of taxi IDs for diagnostic emit. */
     private java.util.Set<Integer> diagnosticSampleIds;
 
@@ -810,6 +813,7 @@ public class TaxiSimulation {
         for (TaxiAgent taxi : taxiFleet) {
             shiftSim.simulateShift(taxi);
         }
+        emptyLegStats = shiftSim.getEmptyLegStats();
 
         double emptyRatio = 100.0 * totalEmptyTrips / allTrips.size();
         System.out.println("[CHECKPOINT] Generated " + allTrips.size() + " trips " +
@@ -1401,6 +1405,25 @@ public class TaxiSimulation {
         metrics.put("LOCAL_TAXI.out_of_territory_rate",
                 localPassengerTrips > 0 ? (double) outOfTerritory / localPassengerTrips : 0.0);
 
+        // WP0 diagnostics: spatial shares and the empty-leg path decomposition.
+        // Operating-zone rows are written only when a zone is loaded (a disabled
+        // check must not read as 100%).
+        metrics.put("SPATIAL.bbox_both_ends_pct", TaxiSpatialMetrics.bothEndsInBoxShare(allTrips,
+                config.getBoundsMinLon(), config.getBoundsMaxLon(),
+                config.getBoundsMinLat(), config.getBoundsMaxLat()));
+        boolean zoneOn = geoValidator != null && geoValidator.isOperatingZoneEnabled();
+        metrics.put("SPATIAL.operating_zone_enabled", zoneOn ? 1.0 : 0.0);
+        if (zoneOn) {
+            metrics.put("SPATIAL.operating_zone_pickup_pct",
+                    TaxiSpatialMetrics.pickupInsideShare(allTrips, geoValidator::isInOperatingZone));
+            metrics.put("SPATIAL.operating_zone_both_outside_pct",
+                    TaxiSpatialMetrics.bothEndsOutsideShare(allTrips, geoValidator::isInOperatingZone));
+        }
+        metrics.put("SPATIAL.nearby_trip_pct",
+                TaxiSpatialMetrics.nearbyTripRatio(taxiFleet, config.getNearbyTripRadiusKm()));
+        metrics.put("TEMPORAL.vacancy_time_pct", TaxiSpatialMetrics.vacancyTimeShare(taxiFleet));
+        if (emptyLegStats != null) metrics.putAll(emptyLegStats.toDashboardRows());
+
         // Reference targets
         metrics.put("REFERENCE.configured_fleet_size", (double) config.getTaxiFleetSize());
         metrics.put("REFERENCE.avg_passenger_trips_per_taxi",
@@ -1457,9 +1480,15 @@ public class TaxiSimulation {
         if (baselineFile.exists()) {
             TaxiValidationEngine validator = new TaxiValidationEngine();
             validator.loadBaseline(baselinePath);
-            TaxiValidationEngine.ValidationReport report = validator.validate(taxiFleet, allTrips, config);
+            TaxiValidationEngine.ValidationReport report =
+                    validator.validate(taxiFleet, allTrips, config, geoValidator);
             report.printReport();
             report.writeToFile(runDir);
+            try {
+                validator.writeTiers(runDir + File.separator + "validation_tiers.csv");
+            } catch (IOException e) {
+                System.err.println("[VALIDATION] Could not write validation_tiers.csv: " + e.getMessage());
+            }
         } else {
             System.out.println("\n[VALIDATION] No baseline CSV found at: " + baselinePath);
             System.out.println("[VALIDATION] Skipping validation (create config/taxi/validation/taxi_baseline_"

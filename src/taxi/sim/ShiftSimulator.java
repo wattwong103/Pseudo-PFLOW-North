@@ -89,6 +89,11 @@ class ShiftSimulator {
     // RIDE_HAIL_PRHS taxis stay OFF_DUTY for the day.
     private final List<PrhsWindow> prhsWindowsToday;
 
+    // WP0: empty legs decomposed by how their end point was produced.
+    private final EmptyLegStats emptyLegStats = new EmptyLegStats();
+    // Path of the most recent sampleDualModeEmptyLeg() result (single-threaded).
+    private EmptyLegPath lastEmptyLegPath = EmptyLegPath.FIRST_DRAW;
+
     ShiftSimulator(TaxiConfig config, TaxiSimulation host,
                    ModeMixResolver modeMix, Random random,
                    DiagnosticWriter diagnostics,
@@ -112,6 +117,10 @@ class ShiftSimulator {
                     ? "(none today)"
                     : prhsWindowsToday.toString()));
         }
+    }
+
+    EmptyLegStats getEmptyLegStats() {
+        return emptyLegStats;
     }
 
     private static List<PrhsWindow> parsePrhsWindowsForToday(TaxiConfig config) {
@@ -221,26 +230,35 @@ class ShiftSimulator {
             final double pickupLon, pickupLat;
             final ModeMixResolver.PickupMode pickupMode;
             final long emptyTravelTime;
+            final EmptyLegPath emptyLegPath;
 
             if (atStand) {
                 // Move to hub-zone centroid; pickup is a STAND pickup.
                 pickupLon = standZone.getCenterLon();
                 pickupLat = standZone.getCenterLat();
                 pickupMode = ModeMixResolver.PickupMode.STAND;
+                emptyLegPath = EmptyLegPath.STAND;
             } else {
                 // DUAL_MODE: log-normal empty leg toward attractive zone centroid.
                 double[] emptyResult = sampleDualModeEmptyLeg(taxi, curLon, curLat, currentTime);
                 pickupLon = emptyResult[0];
                 pickupLat = emptyResult[1];
                 pickupMode = modeMix.sampleStreetVsApp(type);
+                emptyLegPath = lastEmptyLegPath;
             }
 
             double emptyRoadKm = host.calculateDistance(curLon, curLat, pickupLon, pickupLat);
             emptyTravelTime = TaxiTrip.estimateTravelTime(emptyRoadKm);
 
             // Emit empty-trip record for the cruise (above threshold).
-            if (emptyRoadKm > emptyTripThresholdKm) {
+            final boolean emptyLegRecorded = emptyRoadKm > emptyTripThresholdKm;
+            if (emptyLegRecorded) {
                 emitEmptyTrip(taxi, curLon, curLat, pickupLon, pickupLat, currentTime, emptyTravelTime);
+                TaxiGeoValidator zoneCheck = host.getGeoValidator();
+                emptyLegStats.record(emptyLegPath, emptyRoadKm,
+                    zoneCheck == null || zoneCheck.isInOperatingZone(curLon, curLat));
+            } else {
+                emptyLegStats.recordUnrecorded(emptyRoadKm);
             }
             currentTime += emptyTravelTime;
             // B7: per-cycle EMPTY_LEG record (always recorded, even sub-threshold).
@@ -277,6 +295,7 @@ class ShiftSimulator {
             // --- 3. OCCUPIED loaded leg ---
             double[] dropoff = host.sampleLogNormalLoadedLeg(pickupLon, pickupLat);
             if (dropoff == null) {
+                if (emptyLegRecorded) emptyLegStats.markOrphan(emptyRoadKm);
                 // B7.3: Projection failed even after spiral. Previously this
                 // ended the entire shift, costing ~36% of all cycles per
                 // diagnostic.csv evidence. Instead, we now skip ONLY this
@@ -421,10 +440,15 @@ class ShiftSimulator {
         if (gv != null && !gv.isValidLocation(newLon, newLat)) {
             double[] projected = host.projectToNearestValidCell(newLon, newLat,
                 config.getProjectionRadiusKm());
-            if (projected != null) return projected;
+            if (projected != null) {
+                lastEmptyLegPath = EmptyLegPath.PROJECTED;
+                return projected;
+            }
             // Fall back to current position if projection fails (zero empty leg).
+            lastEmptyLegPath = EmptyLegPath.STAY_PUT;
             return new double[]{curLon, curLat};
         }
+        lastEmptyLegPath = EmptyLegPath.FIRST_DRAW;
         return new double[]{newLon, newLat};
     }
 

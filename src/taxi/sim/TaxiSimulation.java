@@ -1,6 +1,7 @@
 package taxi.sim;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -93,6 +94,10 @@ public class TaxiSimulation {
 
     /** B7: per-cycle diagnostic CSV writer (no-op when disabled). */
     private DiagnosticWriter diagnosticWriter;
+    /** WP0: empty-leg path decomposition from the shift simulator (dashboard). */
+    private EmptyLegStats emptyLegStats;
+    /** WP0: loaded-leg drop-off outcomes by pickup border group (zone runs only). */
+    private final LoadedLegBorderStats loadedLegBorderStats = new LoadedLegBorderStats();
     /** B7: pre-computed stratified sample of taxi IDs for diagnostic emit. */
     private java.util.Set<Integer> diagnosticSampleIds;
 
@@ -199,6 +204,7 @@ public class TaxiSimulation {
         }
 
         // Initialize spatial validator if enabled
+        checkOperatingZoneConfig(config);
         if (config.isSpatialValidationEnabled()) {
             geoValidator = new TaxiGeoValidator(config.getShapefileDir());
             geoValidator.setRiverBufferKm(config.getRiverBufferKm());
@@ -207,6 +213,7 @@ public class TaxiSimulation {
                 config.getBoundsMinLat(), config.getBoundsMaxLat()
             };
             geoValidator.loadAll(config.getPrefectureCodes(), configBounds);
+            geoValidator.loadOperatingZone(new java.util.LinkedHashSet<>(config.getOperatingZoneAdmCodes()));
         } else {
             System.out.println("[SPATIAL] Spatial validation DISABLED");
             geoValidator = null;
@@ -225,6 +232,9 @@ public class TaxiSimulation {
 
         // Initialize transport network index and enrich zones
         initializeTransportIndex();
+
+        // WP0: restrict cruise targets and stand hubs to the operating zone
+        markServiceEligibility();
     }
 
     /**
@@ -659,13 +669,25 @@ public class TaxiSimulation {
         for (int i = 0; i < numTaxis; i++) {
             // Random home location within city bounds, with spatial validation
             double homeLon, homeLat;
-            int homeAttempt = 0;
-            double[] homeBounds = getSamplingBounds();
-            do {
-                homeLon = homeBounds[0] + random.nextDouble() * (homeBounds[1] - homeBounds[0]);
-                homeLat = homeBounds[2] + random.nextDouble() * (homeBounds[3] - homeBounds[2]);
-                homeAttempt++;
-            } while (homeAttempt < 50 && !isValidLocation(homeLon, homeLat));
+            if (geoValidator != null && geoValidator.isOperatingZoneEnabled()) {
+                // WP0: homes (= shift starts) inside the operating zone.
+                org.locationtech.jts.geom.Envelope zoneEnv = geoValidator.getOperatingZoneEnvelope();
+                double[] home = sampleHome(
+                    new double[]{zoneEnv.getMinX(), zoneEnv.getMaxX(), zoneEnv.getMinY(), zoneEnv.getMaxY()},
+                    (lon, lat) -> isValidLocation(lon, lat) && geoValidator.isInOperatingZone(lon, lat),
+                    config.getHomeMaxAttempts(), random);
+                homeLon = home[0];
+                homeLat = home[1];
+            } else {
+                // Unchanged without an operating zone (keeps other cities' random stream).
+                int homeAttempt = 0;
+                double[] homeBounds = getSamplingBounds();
+                do {
+                    homeLon = homeBounds[0] + random.nextDouble() * (homeBounds[1] - homeBounds[0]);
+                    homeLat = homeBounds[2] + random.nextDouble() * (homeBounds[3] - homeBounds[2]);
+                    homeAttempt++;
+                } while (homeAttempt < 50 && !isValidLocation(homeLon, homeLat));
+            }
 
             // 5-type fleet sample from configured shares (DESIGN.md §2.2 formula).
             TaxiType taxiType;
@@ -809,6 +831,7 @@ public class TaxiSimulation {
         for (TaxiAgent taxi : taxiFleet) {
             shiftSim.simulateShift(taxi);
         }
+        emptyLegStats = shiftSim.getEmptyLegStats();
 
         double emptyRatio = 100.0 * totalEmptyTrips / allTrips.size();
         System.out.println("[CHECKPOINT] Generated " + allTrips.size() + " trips " +
@@ -997,10 +1020,24 @@ public class TaxiSimulation {
      * nearest hub-zone". Returns null if no hub zones are configured.
      */
     DestinationZone selectNearestHubZone(double lon, double lat) {
+        return nearestZone(destinationZones, lon, lat, true);
+    }
+
+    /** Nearest service-eligible zone (fallback target when no zone scores > 0). */
+    DestinationZone nearestEligibleZone(double lon, double lat) {
+        return nearestZone(destinationZones, lon, lat, false);
+    }
+
+    /**
+     * Nearest zone centre among service-eligible zones (hubs only if hubsOnly);
+     * null if there is none. Without an operating zone every zone is eligible.
+     */
+    static DestinationZone nearestZone(List<DestinationZone> zones, double lon, double lat, boolean hubsOnly) {
         DestinationZone nearest = null;
         double minDist = Double.MAX_VALUE;
-        for (DestinationZone zone : destinationZones) {
-            if (!zone.isTransportHub()) continue;
+        for (DestinationZone zone : zones) {
+            if (hubsOnly && !zone.isTransportHub()) continue;
+            if (!zone.isServiceEligible()) continue;
             double d = zone.getDistanceFromCenter(lon, lat);
             if (d < minDist) {
                 minDist = d;
@@ -1008,6 +1045,98 @@ public class TaxiSimulation {
             }
         }
         return nearest;
+    }
+
+    /**
+     * Uniform point in bounds {minLon, maxLon, minLat, maxLat} that satisfies
+     * acceptable(lon, lat), drawing at most maxAttempts points.
+     *
+     * @throws IllegalStateException if no acceptable point was drawn
+     */
+    static double[] sampleHome(double[] bounds, java.util.function.BiPredicate<Double, Double> acceptable,
+                               int maxAttempts, Random random) {
+        for (int i = 0; i < maxAttempts; i++) {
+            double lon = bounds[0] + random.nextDouble() * (bounds[1] - bounds[0]);
+            double lat = bounds[2] + random.nextDouble() * (bounds[3] - bounds[2]);
+            if (acceptable.test(lon, lat)) return new double[]{lon, lat};
+        }
+        throw new IllegalStateException("No acceptable home location after " + maxAttempts + " attempts");
+    }
+
+    /**
+     * An operating zone needs the spatial layers: without them no point could be
+     * tested, and the run would silently ignore the zone.
+     */
+    static void checkOperatingZoneConfig(TaxiConfig config) {
+        if (!config.getOperatingZoneAdmCodes().isEmpty() && !config.isSpatialValidationEnabled()) {
+            throw new IllegalStateException("operating.zone.adm.codes is set but spatial.validation.enabled=false;"
+                + " the operating zone needs spatial validation");
+        }
+    }
+
+    /**
+     * Search radius for a zone's service point when its centre fails spatial
+     * validation (e.g. Z32 Sumida, inside the 150 m river buffer): more than 3x
+     * the river buffer and well inside the smallest zone radius (0.8 km).
+     * A documented constant, not a calibrated parameter.
+     */
+    static final double ANCHOR_SEARCH_RADIUS_KM = 0.5;
+
+    /**
+     * WP0 eligibility: a zone may be a cruise target or a stand hub only if its
+     * centre is inside the operating zone and a valid point exists within
+     * ANCHOR_SEARCH_RADIUS_KM of the centre (the centre itself if valid). That
+     * point becomes the zone's anchor (deadhead fallback, stand pickup).
+     *
+     * @return true if eligible; the anchor is set only then
+     */
+    static boolean assignAnchor(DestinationZone zone,
+                                java.util.function.BiPredicate<Double, Double> inZone,
+                                java.util.function.BiPredicate<Double, Double> valid,
+                                java.util.function.BiFunction<Double, Double, double[]> project) {
+        double lon = zone.getCenterLon();
+        double lat = zone.getCenterLat();
+        if (!inZone.test(lon, lat)) return false;
+        if (valid.test(lon, lat)) {
+            zone.setAnchor(lon, lat);
+            return true;
+        }
+        double[] p = project.apply(lon, lat);
+        if (p == null || !inZone.test(p[0], p[1])) return false;
+        zone.setAnchor(p[0], p[1]);
+        return true;
+    }
+
+    /** WP0: mark each zone service-eligible (or not) and set its anchor. */
+    private void markServiceEligibility() {
+        if (geoValidator == null || !geoValidator.isOperatingZoneEnabled()) return;
+        List<String> ineligible = new ArrayList<>();
+        int eligibleHubs = 0;
+        int hubsInFile = 0;
+        for (DestinationZone zone : destinationZones) {
+            if (zone.isTransportHub()) hubsInFile++;
+            // The anchor search must accept a point only if it is valid AND in the zone.
+            boolean ok = assignAnchor(zone, geoValidator::isInOperatingZone, this::isValidLocation,
+                (lon, lat) -> spiralSearch(lon, lat, ANCHOR_SEARCH_RADIUS_KM,
+                    (x, y) -> isValidLocation(x, y) && geoValidator.isInOperatingZone(x, y)));
+            zone.setServiceEligible(ok);
+            if (!ok) {
+                ineligible.add(zone.getZoneId() + " " + zone.getName());
+                continue;
+            }
+            if (zone.isTransportHub()) eligibleHubs++;
+            if (zone.getAnchorLon() != zone.getCenterLon() || zone.getAnchorLat() != zone.getCenterLat()) {
+                double km = calculateDistance(zone.getCenterLon(), zone.getCenterLat(),
+                    zone.getAnchorLon(), zone.getAnchorLat()) / config.getManhattanFactor();
+                System.out.println("[ZONE] " + zone.getZoneId() + " " + zone.getName() + ": centre fails "
+                    + geoValidator.describeValidity(zone.getCenterLon(), zone.getCenterLat())
+                    + "; anchored " + String.format("%.3f km", km) + " away at ("
+                    + String.format("%.5f, %.5f)", zone.getAnchorLon(), zone.getAnchorLat()));
+            }
+        }
+        System.out.println("[ZONE] Service-eligible zones: " + (destinationZones.size() - ineligible.size())
+            + " of " + destinationZones.size() + " (" + eligibleHubs + " hubs); ineligible: " + ineligible);
+        checkEligibility(destinationZones.size() - ineligible.size(), hubsInFile, eligibleHubs);
     }
 
     /**
@@ -1105,6 +1234,16 @@ public class TaxiSimulation {
         if (geoValidator.isValidLocation(lon, lat)) {
             return new double[]{lon, lat};  // already valid (defensive)
         }
+        return spiralSearch(lon, lat, radiusKm, geoValidator::isValidLocation);
+    }
+
+    /**
+     * Nearest acceptable point on rings of 50 m steps x 8 bearings (0 = east,
+     * counter-clockwise) out to radiusKm; null if none. The start point itself
+     * is not tested. Deterministic, no random draws.
+     */
+    static double[] spiralSearch(double lon, double lat, double radiusKm,
+                                 java.util.function.BiPredicate<Double, Double> acceptable) {
         final double STEP_KM = 0.05;       // 50 m grid spacing
         final int ANGULAR_SAMPLES = 8;     // 45° apart
         final double cosLat = Math.cos(Math.toRadians(lat));
@@ -1119,12 +1258,26 @@ public class TaxiSimulation {
                 double dLat = (r * Math.sin(bearing)) / 111.32;
                 double candLon = lon + dLon;
                 double candLat = lat + dLat;
-                if (geoValidator.isValidLocation(candLon, candLat)) {
+                if (acceptable.test(candLon, candLat)) {
                     return new double[]{candLon, candLat};
                 }
             }
         }
-        return null;  // no valid cell within radius
+        return null;  // no acceptable cell within radius
+    }
+
+    /**
+     * WP0 fail-fast: with an operating zone, at least one zone must be eligible
+     * (deadhead fallback), and if the file has hubs, at least one hub must be
+     * eligible (otherwise every stand roll silently becomes DUAL_MODE).
+     */
+    static void checkEligibility(int eligibleZones, int hubsInFile, int eligibleHubs) {
+        if (eligibleZones == 0) {
+            throw new IllegalStateException("No destination zone is service-eligible in the operating zone");
+        }
+        if (hubsInFile > 0 && eligibleHubs == 0) {
+            throw new IllegalStateException(hubsInFile + " transport hubs configured but none is service-eligible");
+        }
     }
 
     /**
@@ -1189,12 +1342,22 @@ public class TaxiSimulation {
         final double dropLon = pickupLon + dLon;
         final double dropLat = pickupLat + dLat;
 
+        // WP0 diagnostic: outcome by pickup municipality (zone runs only; no RNG).
+        final String pickupCode = geoValidator != null && geoValidator.isOperatingZoneEnabled()
+            ? geoValidator.operatingZoneCodeAt(pickupLon, pickupLat) : null;
+        final boolean trackBorder = geoValidator != null && geoValidator.isOperatingZoneEnabled();
+
         // Validate; project to nearest valid cell if invalid.
         double[] result;
+        boolean projected = false;
         if (geoValidator != null && !geoValidator.isValidLocation(dropLon, dropLat)) {
             result = projectToNearestValidCell(dropLon, dropLat,
                 config.getProjectionRadiusKm());  // may return null → caller falls back
-            if (result == null) return null;
+            if (result == null) {
+                if (trackBorder) loadedLegBorderStats.record(pickupCode, LoadedLegBorderStats.Outcome.FAILED);
+                return null;
+            }
+            projected = true;
         } else {
             result = new double[]{dropLon, dropLat};
         }
@@ -1207,8 +1370,11 @@ public class TaxiSimulation {
         // current position; cheap retry budget per cycle).
         double finalRoadKm = TaxiTrip.distanceKm(pickupLon, pickupLat, result[0], result[1]);
         if (finalRoadKm < minRoad) {
+            if (trackBorder) loadedLegBorderStats.record(pickupCode, LoadedLegBorderStats.Outcome.FAILED);
             return null;
         }
+        if (trackBorder) loadedLegBorderStats.record(pickupCode,
+            projected ? LoadedLegBorderStats.Outcome.PROJECTED : LoadedLegBorderStats.Outcome.DIRECT);
         return result;
     }
 
@@ -1400,6 +1566,33 @@ public class TaxiSimulation {
         metrics.put("LOCAL_TAXI.out_of_territory_rate",
                 localPassengerTrips > 0 ? (double) outOfTerritory / localPassengerTrips : 0.0);
 
+        // WP0 diagnostics: spatial shares and the empty-leg path decomposition.
+        // Operating-zone rows are written only when a zone is loaded (a disabled
+        // check must not read as 100%).
+        metrics.put("SPATIAL.bbox_both_ends_pct", TaxiSpatialMetrics.bothEndsInBoxShare(allTrips,
+                config.getBoundsMinLon(), config.getBoundsMaxLon(),
+                config.getBoundsMinLat(), config.getBoundsMaxLat()));
+        boolean zoneOn = geoValidator != null && geoValidator.isOperatingZoneEnabled();
+        metrics.put("SPATIAL.operating_zone_enabled", zoneOn ? 1.0 : 0.0);
+        if (zoneOn) {
+            metrics.put("SPATIAL.operating_zone_pickup_pct",
+                    TaxiSpatialMetrics.pickupInsideShare(allTrips, geoValidator::isInOperatingZone));
+            metrics.put("SPATIAL.operating_zone_both_outside_pct",
+                    TaxiSpatialMetrics.bothEndsOutsideShare(allTrips, geoValidator::isInOperatingZone));
+            metrics.putAll(loadedLegBorderStats.toDashboardRows());
+        }
+        metrics.put("SPATIAL.nearby_trip_pct",
+                TaxiSpatialMetrics.nearbyTripRatio(taxiFleet, config.getNearbyTripRadiusKm()));
+        metrics.put("TEMPORAL.vacancy_time_pct", TaxiSpatialMetrics.vacancyTimeShare(taxiFleet));
+        if (emptyLegStats != null) {
+            metrics.putAll(emptyLegStats.toDashboardRows(zoneOn));
+            double sigmaE = config.getTripDistanceEmptySigma();
+            double muE = Math.log(config.getTripDistanceEmptyMeanKm()) - 0.5 * sigmaE * sigmaE;
+            // x1000: the dashboard prints two decimals and D is ~1e-3.
+            metrics.put("EMPTY_LEGS.first_draw_ks_d_permille", 1000.0 * emptyLegStats.ksFirstDraw(muE, sigmaE,
+                    ShiftSimulator.EMPTY_MIN_ROAD_KM, ShiftSimulator.EMPTY_MAX_ROAD_KM));
+        }
+
         // Reference targets
         metrics.put("REFERENCE.configured_fleet_size", (double) config.getTaxiFleetSize());
         metrics.put("REFERENCE.avg_passenger_trips_per_taxi",
@@ -1456,9 +1649,15 @@ public class TaxiSimulation {
         if (baselineFile.exists()) {
             TaxiValidationEngine validator = new TaxiValidationEngine();
             validator.loadBaseline(baselinePath);
-            TaxiValidationEngine.ValidationReport report = validator.validate(taxiFleet, allTrips, config);
+            TaxiValidationEngine.ValidationReport report =
+                    validator.validate(taxiFleet, allTrips, config, geoValidator);
             report.printReport();
             report.writeToFile(runDir);
+            try {
+                validator.writeTiers(runDir + File.separator + "validation_tiers.csv");
+            } catch (IOException e) {
+                System.err.println("[VALIDATION] Could not write validation_tiers.csv: " + e.getMessage());
+            }
         } else {
             System.out.println("\n[VALIDATION] No baseline CSV found at: " + baselinePath);
             System.out.println("[VALIDATION] Skipping validation (create config/taxi/validation/taxi_baseline_"

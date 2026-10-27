@@ -3,6 +3,8 @@ package taxi.sim;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
+import java.util.function.BiPredicate;
+import java.util.function.Supplier;
 
 /**
  * Shift-time taxi simulator (v7.0 engine). Activated by config key
@@ -81,13 +83,18 @@ class ShiftSimulator {
     private final double emptyMu;
     private final double emptySigma;
     // Empty-leg bounds (DESIGN.md §2.6: [0.3, 12] km road-km).
-    private static final double EMPTY_MIN_ROAD_KM = 0.3;
-    private static final double EMPTY_MAX_ROAD_KM = 12.0;
+    static final double EMPTY_MIN_ROAD_KM = 0.3;
+    static final double EMPTY_MAX_ROAD_KM = 12.0;
 
     // B3 / Phase 6: pre-parsed PRHS windows filtered to today's day-of-week.
     // Empty list ⇒ no PRHS operating today (Sun in R8 contraction, etc.) ⇒ all
     // RIDE_HAIL_PRHS taxis stay OFF_DUTY for the day.
     private final List<PrhsWindow> prhsWindowsToday;
+
+    // WP0: empty legs decomposed by how their end point was produced.
+    private final EmptyLegStats emptyLegStats = new EmptyLegStats();
+    // Path of the most recent sampleDualModeEmptyLeg() result (single-threaded).
+    private EmptyLegPath lastEmptyLegPath = EmptyLegPath.FIRST_DRAW;
 
     ShiftSimulator(TaxiConfig config, TaxiSimulation host,
                    ModeMixResolver modeMix, Random random,
@@ -112,6 +119,10 @@ class ShiftSimulator {
                     ? "(none today)"
                     : prhsWindowsToday.toString()));
         }
+    }
+
+    EmptyLegStats getEmptyLegStats() {
+        return emptyLegStats;
     }
 
     private static List<PrhsWindow> parsePrhsWindowsForToday(TaxiConfig config) {
@@ -153,6 +164,10 @@ class ShiftSimulator {
 
         // B7: cycle counter for diagnostic emit and end-of-shift marker.
         int cycleIdx = 0;
+        // WP0: the latest empty leg not yet followed by a passenger leg. If the
+        // next cycle starts, or the shift ends, first, it is an orphan.
+        EmptyLegPath pendingEmptyPath = null;
+        double pendingEmptyKm = 0.0;
         boolean shiftEndEmitted = false;  // sentinel to avoid duplicate SHIFT_END_MARKER
         final boolean diagnose = diagnostics != null && diagnostics.isEnabled()
             && diagnosticSampleIds != null && diagnosticSampleIds.contains(taxi.getTaxiId());
@@ -221,27 +236,40 @@ class ShiftSimulator {
             final double pickupLon, pickupLat;
             final ModeMixResolver.PickupMode pickupMode;
             final long emptyTravelTime;
+            final EmptyLegPath emptyLegPath;
 
             if (atStand) {
-                // Move to hub-zone centroid; pickup is a STAND pickup.
-                pickupLon = standZone.getCenterLon();
-                pickupLat = standZone.getCenterLat();
+                // Move to the hub's service point (its centroid unless WP0 anchored it); STAND pickup.
+                pickupLon = standZone.getAnchorLon();
+                pickupLat = standZone.getAnchorLat();
                 pickupMode = ModeMixResolver.PickupMode.STAND;
+                emptyLegPath = EmptyLegPath.STAND;
             } else {
                 // DUAL_MODE: log-normal empty leg toward attractive zone centroid.
                 double[] emptyResult = sampleDualModeEmptyLeg(taxi, curLon, curLat, currentTime);
                 pickupLon = emptyResult[0];
                 pickupLat = emptyResult[1];
                 pickupMode = modeMix.sampleStreetVsApp(type);
+                emptyLegPath = lastEmptyLegPath;
             }
 
             double emptyRoadKm = host.calculateDistance(curLon, curLat, pickupLon, pickupLat);
             emptyTravelTime = TaxiTrip.estimateTravelTime(emptyRoadKm);
 
             // Emit empty-trip record for the cruise (above threshold).
+            if (pendingEmptyPath != null) {
+                emptyLegStats.markOrphan(pendingEmptyPath, pendingEmptyKm, false);
+            }
             if (emptyRoadKm > emptyTripThresholdKm) {
                 emitEmptyTrip(taxi, curLon, curLat, pickupLon, pickupLat, currentTime, emptyTravelTime);
+                TaxiGeoValidator zoneCheck = host.getGeoValidator();
+                emptyLegStats.record(emptyLegPath, emptyRoadKm,
+                    zoneCheck == null || zoneCheck.isInOperatingZone(curLon, curLat));
+            } else {
+                emptyLegStats.recordUnrecorded(emptyLegPath, emptyRoadKm);
             }
+            pendingEmptyPath = emptyLegPath;
+            pendingEmptyKm = emptyRoadKm;
             currentTime += emptyTravelTime;
             // B7: per-cycle EMPTY_LEG record (always recorded, even sub-threshold).
             if (diagnose) {
@@ -339,6 +367,7 @@ class ShiftSimulator {
             passengerTrip.setAssignedTaxiId(taxi.getTaxiId());
             passengerTrip.setStatus(TaxiTrip.TripStatus.COMPLETED);
             taxi.assignTrip(passengerTrip);
+            pendingEmptyPath = null;
             host.recordPassengerTripOutput(passengerTrip);
             host.recordPickupMode(type, pickupMode);
             // B7: per-cycle LOADED_LEG record. Includes pickup_wait + travel.
@@ -354,6 +383,9 @@ class ShiftSimulator {
             curLat = dropLat;
             currentTime = dropoffTime + config.getShiftBreakTimeSeconds();
             cycleIdx++;
+        }
+        if (pendingEmptyPath != null) {
+            emptyLegStats.markOrphan(pendingEmptyPath, pendingEmptyKm, true);
         }
         // Natural exit fallback: only emit if no break path already did.
         if (diagnose && !shiftEndEmitted) {
@@ -372,6 +404,64 @@ class ShiftSimulator {
      * scan as the loaded-leg path.
      */
     private double[] sampleDualModeEmptyLeg(TaxiAgent taxi, double curLon, double curLat, long currentTime) {
+        // Same draw order as before WP0 (distance, target, bearing), so a run
+        // without an operating zone keeps its random stream.
+        final double roadKm = drawEmptyRoadKm();
+        final DestinationZone target = pickAttractiveZone(currentTime);
+        final double[] first = moveToward(target, curLon, curLat, roadKm);
+
+        TaxiGeoValidator gv = host.getGeoValidator();
+        if (gv == null || !gv.isOperatingZoneEnabled()) return first;
+
+        // WP0: the cruising end point is the pickup, which must lie inside the
+        // operating zone. Re-draw the distance toward the same target; after
+        // operating.zone.pickup.max.attempts, deadhead to the target centroid
+        // (eligible zones are inside the zone and on valid land).
+        final EmptyLegPath firstPath = lastEmptyLegPath;
+        DestinationZone anchor = target != null ? target : host.nearestEligibleZone(curLon, curLat);
+        double[] fallback = anchor != null
+            ? new double[]{anchor.getAnchorLon(), anchor.getAnchorLat()}
+            : new double[]{curLon, curLat};
+        final boolean[] firstUsed = {false};
+        InZoneResult r = acceptInZone(() -> {
+            if (!firstUsed[0]) {
+                firstUsed[0] = true;
+                return first;
+            }
+            return moveToward(target, curLon, curLat, drawEmptyRoadKm());
+        }, gv::isInOperatingZone, fallback, config.getOperatingZoneMaxAttempts());
+        emptyLegStats.recordAttempts(r.attempts);
+        lastEmptyLegPath = r.fellBack ? EmptyLegPath.CENTROID_DEADHEAD
+            : (r.attempts == 1 ? firstPath : EmptyLegPath.RESAMPLED);
+        return new double[]{r.lon, r.lat};
+    }
+
+    /** Result of {@link #acceptInZone}: the accepted point, draws used, and whether it fell back. */
+    static final class InZoneResult {
+        final double lon, lat;
+        final int attempts;
+        final boolean fellBack;
+
+        InZoneResult(double lon, double lat, int attempts, boolean fellBack) {
+            this.lon = lon; this.lat = lat; this.attempts = attempts; this.fellBack = fellBack;
+        }
+    }
+
+    /**
+     * Returns the first sample for which inside(lon, lat) holds, drawing at most
+     * maxAttempts samples; otherwise the fallback point (fellBack = true).
+     */
+    static InZoneResult acceptInZone(Supplier<double[]> sampler, BiPredicate<Double, Double> inside,
+                                     double[] fallback, int maxAttempts) {
+        for (int i = 1; i <= maxAttempts; i++) {
+            double[] p = sampler.get();
+            if (inside.test(p[0], p[1])) return new InZoneResult(p[0], p[1], i, false);
+        }
+        return new InZoneResult(fallback[0], fallback[1], maxAttempts, true);
+    }
+
+    /** Log-normal road-km for one empty leg, re-drawn into [EMPTY_MIN, EMPTY_MAX] (B7.5). */
+    private double drawEmptyRoadKm() {
         // Sample log-normal road-km empty distance per DESIGN.md §2.6.
         // B7.5: reject-and-redraw within [EMPTY_MIN_ROAD_KM, EMPTY_MAX_ROAD_KM]
         // instead of clamping; eliminates at-floor spike artifact.
@@ -384,10 +474,17 @@ class ShiftSimulator {
         if (roadKm < EMPTY_MIN_ROAD_KM || roadKm > EMPTY_MAX_ROAD_KM) {
             roadKm = Math.max(EMPTY_MIN_ROAD_KM, Math.min(EMPTY_MAX_ROAD_KM, roadKm));
         }
-        double haversineKm = roadKm / manhattanFactor;
+        return roadKm;
+    }
 
-        // Pick target zone weighted by attractiveness.
-        DestinationZone target = pickAttractiveZone(currentTime);
+    /**
+     * Move roadKm (as road distance) from the current position toward the target
+     * centroid, or on a uniform random bearing if there is no target; project to
+     * the nearest valid cell if the end point fails spatial validation, or stay
+     * put if projection fails. Sets {@link #lastEmptyLegPath}.
+     */
+    private double[] moveToward(DestinationZone target, double curLon, double curLat, double roadKm) {
+        double haversineKm = roadKm / manhattanFactor;
 
         // Determine bearing: toward target centroid, or uniform random if no zone.
         double dxKm, dyKm;
@@ -421,10 +518,15 @@ class ShiftSimulator {
         if (gv != null && !gv.isValidLocation(newLon, newLat)) {
             double[] projected = host.projectToNearestValidCell(newLon, newLat,
                 config.getProjectionRadiusKm());
-            if (projected != null) return projected;
+            if (projected != null) {
+                lastEmptyLegPath = EmptyLegPath.PROJECTED;
+                return projected;
+            }
             // Fall back to current position if projection fails (zero empty leg).
+            lastEmptyLegPath = EmptyLegPath.STAY_PUT;
             return new double[]{curLon, curLat};
         }
+        lastEmptyLegPath = EmptyLegPath.FIRST_DRAW;
         return new double[]{newLon, newLat};
     }
 
@@ -437,25 +539,47 @@ class ShiftSimulator {
         if (zones == null || zones.isEmpty()) return null;
         int timePeriod = host.getTimePeriod(currentTime);
 
-        double[] scores = new double[zones.size()];
-        double totalScore = 0.0;
+        double[] raw = new double[zones.size()];
         for (int i = 0; i < zones.size(); i++) {
-            scores[i] = zones.get(i).calculateAttractiveness(timePeriod,
+            raw[i] = zones.get(i).calculateAttractiveness(timePeriod,
                 config.getAttractivenessBeta1(),
                 config.getAttractivenessBeta2(),
                 config.getAttractivenessBeta3(),
                 config.getAttractivenessBeta4());
-            totalScore += scores[i];
         }
+        double[] scores = eligibleScores(zones, raw);
+        double totalScore = 0.0;
+        for (double s : scores) totalScore += s;
         if (totalScore <= 0) return null;
 
-        double r = random.nextDouble() * totalScore;
-        double cumulative = 0.0;
-        for (int i = 0; i < zones.size(); i++) {
-            cumulative += scores[i];
-            if (r <= cumulative) return zones.get(i);
+        return rouletteZone(zones, scores, random.nextDouble() * totalScore);
+    }
+
+    /** Attractiveness scores with ineligible zones (outside the operating zone) set to 0. */
+    static double[] eligibleScores(List<DestinationZone> zones, double[] raw) {
+        double[] scores = new double[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            scores[i] = zones.get(i).isServiceEligible() ? raw[i] : 0.0;
         }
-        return zones.get(zones.size() - 1);
+        return scores;
+    }
+
+    /**
+     * Roulette pick for r in [0, sum(scores)). Ineligible zones (outside the
+     * operating zone) are skipped and can never be returned; eligible zones
+     * follow the pre-WP0 loop exactly, including its last-zone fallback, so a
+     * run without an operating zone (all zones eligible) is unchanged.
+     */
+    static DestinationZone rouletteZone(List<DestinationZone> zones, double[] scores, double r) {
+        double cumulative = 0.0;
+        DestinationZone lastEligible = null;
+        for (int i = 0; i < zones.size(); i++) {
+            if (!zones.get(i).isServiceEligible()) continue;
+            cumulative += scores[i];
+            lastEligible = zones.get(i);
+            if (r <= cumulative) return lastEligible;
+        }
+        return lastEligible;
     }
 
     /**

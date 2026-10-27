@@ -142,6 +142,8 @@ public class TaxiValidationEngine {
     // ── Engine ──
 
     private final List<BaselineMetric> baseline = new ArrayList<>();
+    private Map<String, Double> lastMetrics;
+    private boolean lastZoneEnabled;
 
     /**
      * Load baseline metrics from CSV file.
@@ -185,8 +187,19 @@ public class TaxiValidationEngine {
      * @return validation report with pass/fail results
      */
     public ValidationReport validate(List<TaxiAgent> taxis, List<TaxiTrip> trips, TaxiConfig config) {
+        return validate(taxis, trips, config, null);
+    }
+
+    /**
+     * As {@link #validate(List, List, TaxiConfig)}, with the run's spatial
+     * validator so the operating-zone shares can be measured (null = no zone).
+     */
+    public ValidationReport validate(List<TaxiAgent> taxis, List<TaxiTrip> trips, TaxiConfig config,
+                                     TaxiGeoValidator geoValidator) {
         // Compute all metrics from simulation output
-        Map<String, Double> metrics = computeMetrics(taxis, trips, config);
+        Map<String, Double> metrics = computeMetrics(taxis, trips, config, geoValidator);
+        lastMetrics = metrics;
+        lastZoneEnabled = geoValidator != null && geoValidator.isOperatingZoneEnabled();
 
         // Compare each baseline metric against computed values
         List<ValidationResult> results = new ArrayList<>();
@@ -210,9 +223,25 @@ public class TaxiValidationEngine {
     }
 
     /**
+     * Writes validation_tiers.csv (the tiered bar) for the last validate() call,
+     * using the loaded baseline rows as Tier B targets and tolerances.
+     */
+    public void writeTiers(String csvPath) throws IOException {
+        if (lastMetrics == null) throw new IllegalStateException("validate() has not been called");
+        Map<String, double[]> targets = new HashMap<>();
+        for (BaselineMetric bm : baseline) {
+            targets.put(bm.name, new double[] {bm.surveyValue, bm.tolerancePct});
+        }
+        List<TaxiValidationTiers.TierRow> rows = TaxiValidationTiers.build(lastMetrics, targets, lastZoneEnabled);
+        TaxiValidationTiers.writeCsv(rows, csvPath);
+        System.out.println("[VALIDATION] " + TaxiValidationTiers.summary(rows) + " -> " + csvPath);
+    }
+
+    /**
      * Compute all validation metrics from simulation output.
      */
-    private Map<String, Double> computeMetrics(List<TaxiAgent> taxis, List<TaxiTrip> trips, TaxiConfig config) {
+    private Map<String, Double> computeMetrics(List<TaxiAgent> taxis, List<TaxiTrip> trips, TaxiConfig config,
+                                               TaxiGeoValidator geoValidator) {
         Map<String, Double> m = new LinkedHashMap<>();
 
         int fleetSize = config.getTaxiFleetSize();
@@ -274,16 +303,21 @@ public class TaxiValidationEngine {
         // Temporal metrics
         m.put("Night Trip Ratio", passengerTrips > 0 ? 100.0 * nightTrips / passengerTrips : 0.0);
 
-        // Spatial metrics
-        // NOTE: Nearby trip ratio uses config probability as proxy because the
-        // validation engine doesn't have access to the sequential trip chain.
-        // The actual ratio may differ if spatial validation rejects nearby candidates.
-        m.put("Nearby Trip Ratio", config.getNearbyTripProbability() * 100.0);
-
-        // Trips within city bounds: all trips in the list passed spatial validation
-        // during generation, so this is structurally ~100%. A value <99% would indicate
-        // a bug in the spatial validation pipeline.
-        m.put("Trips Within City Bounds", 99.5);
+        // Spatial metrics — measured (WP0). Until 2026-10 these rows echoed
+        // nearby.trip.probability and a constant 99.5; the shift-time engine
+        // has no nearby-trip mechanism, so the ratio now measures the realised
+        // pickup-to-previous-drop-off distance from each taxi's trip chain.
+        m.put("Nearby Trip Ratio", TaxiSpatialMetrics.nearbyTripRatio(taxis, config.getNearbyTripRadiusKm()));
+        m.put("Trips Within City Bounds", TaxiSpatialMetrics.bothEndsInBoxShare(trips,
+                config.getBoundsMinLon(), config.getBoundsMaxLon(),
+                config.getBoundsMinLat(), config.getBoundsMaxLat()));
+        if (geoValidator != null && geoValidator.isOperatingZoneEnabled()) {
+            m.put(TaxiValidationTiers.ZONE_PICKUPS,
+                    TaxiSpatialMetrics.pickupInsideShare(trips, geoValidator::isInOperatingZone));
+            m.put(TaxiValidationTiers.ZONE_BOTH_OUTSIDE,
+                    TaxiSpatialMetrics.bothEndsOutsideShare(trips, geoValidator::isInOperatingZone));
+        }
+        m.put("Vacancy Time Share", TaxiSpatialMetrics.vacancyTimeShare(taxis));
 
         // Distance range checks
         double minDist = trips.stream().filter(TaxiTrip::isPassengerIn)

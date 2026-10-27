@@ -7,6 +7,8 @@ import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.prep.PreparedGeometry;
+import org.locationtech.jts.geom.prep.PreparedGeometryFactory;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.opengis.feature.simple.SimpleFeature;
 
@@ -57,6 +59,15 @@ public class TaxiGeoValidator {
     private Envelope cityEnvelope;
     private boolean cityBoundaryEnabled = false;
     private final Map<String, Boolean> cityValidationCache = new HashMap<>();
+
+    // ── Operating zone (exact adm_code match; optional, per city) ──────────
+    // Not cached: a ~100 m cache key (as in isWithinCity) would merge points on
+    // both sides of a ward border, and this check decides pickup legality.
+    private STRtree operatingZoneIndex;
+    private Envelope operatingZoneEnvelope;
+    private boolean operatingZoneEnabled = false;
+    private Set<String> operatingZoneCodes = Collections.emptySet();
+    private int operatingZonePolygonCount = 0;
 
     // ── Statistics ─────────────────────────────────────────────────────────
     private long totalChecks = 0;
@@ -250,6 +261,115 @@ public class TaxiGeoValidator {
                 e.getMessage() + " — falling back to config bounds");
             cityBoundaryEnabled = false;
         }
+    }
+
+    /**
+     * Loads the operating zone: the polbnda_jpn.shp municipalities whose
+     * adm_code is exactly one of {@code admCodes} (e.g. Tokyo's Special Wards
+     * zone = 13101-13123, 13203, 13204). An empty or null set disables the
+     * zone, and {@link #isInOperatingZone} then returns true everywhere, so a
+     * city without the config key behaves exactly as before.
+     *
+     * @throws IllegalStateException if codes were given but none was found
+     */
+    public void loadOperatingZone(Set<String> admCodes) {
+        operatingZoneEnabled = false;
+        operatingZoneCodes = Collections.emptySet();
+        operatingZonePolygonCount = 0;
+        if (admCodes == null || admCodes.isEmpty()) {
+            System.out.println("[SPATIAL] No operating zone configured");
+            return;
+        }
+        String path = shapefileDir + "polbnda_jpn.shp";
+        List<SimpleFeature> features;
+        try {
+            features = ShpLoader.load(path, "adm_code", admCodes, null);
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot load operating zone from " + path, e);
+        }
+        STRtree index = new STRtree();
+        Envelope envelope = new Envelope();
+        Set<String> found = new TreeSet<>();
+        PreparedGeometryFactory prepared = new PreparedGeometryFactory();
+        for (SimpleFeature feature : features) {
+            Geometry geom = (Geometry) feature.getDefaultGeometry();
+            if (geom == null) continue;
+            String code = feature.getAttribute("adm_code").toString().trim();
+            index.insert(geom.getEnvelopeInternal(), new ZonePolygon(code, prepared.create(geom)));
+            envelope.expandToInclude(geom.getEnvelopeInternal());
+            found.add(code);
+            operatingZonePolygonCount++;
+        }
+        if (found.isEmpty()) {
+            throw new IllegalStateException("Operating zone codes " + admCodes + " matched no polygon in " + path);
+        }
+        Set<String> missing = new TreeSet<>(admCodes);
+        missing.removeAll(found);
+        if (!missing.isEmpty()) {
+            // A silently smaller zone would mis-state where taxis may operate.
+            throw new IllegalStateException("Operating-zone codes not found in " + path + ": " + missing);
+        }
+        index.build();
+        operatingZoneIndex = index;
+        operatingZoneEnvelope = envelope;
+        operatingZoneCodes = Collections.unmodifiableSet(found);
+        operatingZoneEnabled = true;
+        System.out.println("[SPATIAL] Operating zone: " + found.size() + " municipalities, " +
+            operatingZonePolygonCount + " polygons, envelope [" +
+            String.format("%.4f,%.4f] to [%.4f,%.4f]", envelope.getMinX(), envelope.getMinY(),
+                envelope.getMaxX(), envelope.getMaxY()));
+    }
+
+    /**
+     * True if the point lies in the operating zone, or if no zone is loaded.
+     * Exact point-in-polygon on every call (no cache).
+     */
+    public boolean isInOperatingZone(double lon, double lat) {
+        if (!operatingZoneEnabled) return true;
+        return operatingZoneCodeAt(lon, lat) != null;
+    }
+
+    /** adm_code of the operating-zone municipality containing the point; null if outside or disabled. */
+    @SuppressWarnings("unchecked")
+    public String operatingZoneCodeAt(double lon, double lat) {
+        if (!operatingZoneEnabled) return null;
+        Point point = geometryFactory.createPoint(new Coordinate(lon, lat));
+        List<ZonePolygon> candidates = operatingZoneIndex.query(point.getEnvelopeInternal());
+        for (ZonePolygon zp : candidates) {
+            if (zp.geometry.covers(point)) return zp.admCode;
+        }
+        return null;
+    }
+
+    /** One operating-zone polygon with its municipality code. */
+    private static final class ZonePolygon {
+        final String admCode;
+        final PreparedGeometry geometry;
+
+        ZonePolygon(String admCode, PreparedGeometry geometry) {
+            this.admCode = admCode;
+            this.geometry = geometry;
+        }
+    }
+
+    public boolean isOperatingZoneEnabled() { return operatingZoneEnabled; }
+
+    /** Which check isValidLocation would fail first (for logs): "valid", "out of city", "water", "river buffer". */
+    public String describeValidity(double lon, double lat) {
+        if (!isWithinCity(lon, lat)) return "out of city";
+        if (!isOnLand(lon, lat)) return "water";
+        if (isNearRiver(lon, lat, riverBufferKm)) return "river buffer";
+        return "valid";
+    }
+
+    /** adm_codes actually loaded (empty when the zone is disabled). */
+    public Set<String> getOperatingZoneCodes() { return operatingZoneCodes; }
+
+    public int getOperatingZonePolygonCount() { return operatingZonePolygonCount; }
+
+    /** Bounding envelope of the operating zone, or null when disabled. */
+    public Envelope getOperatingZoneEnvelope() {
+        return operatingZoneEnabled ? operatingZoneEnvelope : null;
     }
 
     /**

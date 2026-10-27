@@ -2,7 +2,11 @@ package taxi.sim;
 
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
 import util.PathResolver;
 
@@ -344,6 +348,18 @@ public class TaxiConfig {
     private double riverBufferKm = 0.15;
     /** Comma-separated prefecture adm_code prefixes for shapefile filtering. */
     private String prefectureCodes = "";
+
+    /** Default attempts to keep an empty-leg end point inside the operating zone. */
+    static final int DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS = 20;
+    /** Default attempts to draw a home inside the operating zone (zone enabled only). */
+    static final int DEFAULT_HOME_MAX_ATTEMPTS = 200;
+    /**
+     * 5-digit polbnda adm_codes of the operating zone (operating.zone.adm.codes).
+     * Empty = no operating zone: behaviour is unchanged for that city.
+     */
+    private List<String> operatingZoneAdmCodes = Collections.emptyList();
+    private int operatingZoneMaxAttempts = DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS;
+    private int homeMaxAttempts = DEFAULT_HOME_MAX_ATTEMPTS;
 
     // ═══ Transport Network Index ═══
     /** Whether station/airport proximity enrichment is enabled. */
@@ -726,6 +742,16 @@ public class TaxiConfig {
         shapefileDir = props.getProperty("spatial.shapefile.dir", shapefileDir);
         riverBufferKm = getDouble(props, "spatial.river.buffer.km", riverBufferKm);
         prefectureCodes = props.getProperty("city.prefecture.codes", "").trim();
+        // Defaults are constants, not the previous field values: the singleton
+        // may be reloaded (tests, GSA drivers) and must not keep a stale value.
+        operatingZoneAdmCodes = Collections.unmodifiableList(Arrays.stream(
+                props.getProperty("operating.zone.adm.codes", "").split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .collect(Collectors.toList()));
+        operatingZoneMaxAttempts = getInt(props, "operating.zone.pickup.max.attempts",
+            DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS);
+        homeMaxAttempts = getInt(props, "home.max.attempts", DEFAULT_HOME_MAX_ATTEMPTS);
         System.out.println("  Spatial validation: " + (spatialValidationEnabled ? "ENABLED" : "DISABLED"));
         if (spatialValidationEnabled) {
             System.out.println("  Shapefile dir: " + shapefileDir);
@@ -733,6 +759,9 @@ public class TaxiConfig {
         }
         if (!prefectureCodes.isEmpty()) {
             System.out.println("  Prefecture codes: " + prefectureCodes);
+        }
+        if (!operatingZoneAdmCodes.isEmpty()) {
+            System.out.println("  Operating zone: " + operatingZoneAdmCodes.size() + " adm_codes");
         }
     }
 
@@ -1018,6 +1047,10 @@ public class TaxiConfig {
     public String getShapefileDir() { return shapefileDir; }
     public double getRiverBufferKm() { return riverBufferKm; }
     public String getPrefectureCodes() { return prefectureCodes; }
+    /** Operating-zone adm_codes; empty list = operating zone disabled. */
+    public List<String> getOperatingZoneAdmCodes() { return operatingZoneAdmCodes; }
+    public int getOperatingZoneMaxAttempts() { return operatingZoneMaxAttempts; }
+    public int getHomeMaxAttempts() { return homeMaxAttempts; }
 
     // Transport index getters
     public boolean isTransportIndexEnabled() { return transportIndexEnabled; }

@@ -77,6 +77,16 @@ class OperatingZoneTest {
     }
 
     @Test
+    void aConfiguredCodeMissingFromTheShapefileIsFatal() {
+        TaxiGeoValidator partial = new TaxiGeoValidator(SHP_DIR);
+        Set<String> codes = new TreeSet<>(SPECIAL_WARDS_ZONE);
+        codes.add("99999");
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+            () -> partial.loadOperatingZone(codes));
+        assertFalse(partial.isOperatingZoneEnabled());
+    }
+
+    @Test
     void emptyCodeSetDisablesTheZone() {
         TaxiGeoValidator disabled = new TaxiGeoValidator(SHP_DIR);
         disabled.loadOperatingZone(Collections.emptySet());

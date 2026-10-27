@@ -41,6 +41,16 @@ public class DestinationZone {
     // raster missing (graceful degradation).
     private int landuseClass = LanduseRasterReader.LU_UNKNOWN;
 
+    // WP0 (2026-10): may this zone be a cruise target or a stand hub? Set once
+    // at init when an operating zone is configured (centre inside the zone and
+    // on valid land); always true when no operating zone is configured.
+    private boolean serviceEligible = true;
+    // WP0: the zone's service point (deadhead fallback, stand pickup). The
+    // centre unless the centre fails spatial validation, in which case the
+    // nearest valid point within TaxiSimulation.ANCHOR_SEARCH_RADIUS_KM.
+    private double anchorLon = Double.NaN;
+    private double anchorLat = Double.NaN;
+
     /**
      * Constructor for DestinationZone (V4.0 with zone type and transport hub)
      */
@@ -235,6 +245,13 @@ public class DestinationZone {
     public double getNightlifeWeight() { return nightlifeWeight; }
     public double getResidentialWeight() { return residentialWeight; }
     public boolean isTransportHub() { return isTransportHub; }  // V4.0
+    public boolean isServiceEligible() { return serviceEligible; }
+    public void setServiceEligible(boolean serviceEligible) { this.serviceEligible = serviceEligible; }
+    /** Service point longitude: the anchor if one was set, else the centre. */
+    public double getAnchorLon() { return Double.isNaN(anchorLon) ? centerLon : anchorLon; }
+    /** Service point latitude: the anchor if one was set, else the centre. */
+    public double getAnchorLat() { return Double.isNaN(anchorLat) ? centerLat : anchorLat; }
+    public void setAnchor(double lon, double lat) { this.anchorLon = lon; this.anchorLat = lat; }
 
     // V5.0: Transport proximity setters (called during zone enrichment)
     public void setNearestStation(double distKm, String name) {

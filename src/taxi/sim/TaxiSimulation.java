@@ -202,6 +202,7 @@ public class TaxiSimulation {
         }
 
         // Initialize spatial validator if enabled
+        checkOperatingZoneConfig(config);
         if (config.isSpatialValidationEnabled()) {
             geoValidator = new TaxiGeoValidator(config.getShapefileDir());
             geoValidator.setRiverBufferKm(config.getRiverBufferKm());
@@ -229,6 +230,9 @@ public class TaxiSimulation {
 
         // Initialize transport network index and enrich zones
         initializeTransportIndex();
+
+        // WP0: restrict cruise targets and stand hubs to the operating zone
+        markServiceEligibility();
     }
 
     /**
@@ -663,13 +667,25 @@ public class TaxiSimulation {
         for (int i = 0; i < numTaxis; i++) {
             // Random home location within city bounds, with spatial validation
             double homeLon, homeLat;
-            int homeAttempt = 0;
-            double[] homeBounds = getSamplingBounds();
-            do {
-                homeLon = homeBounds[0] + random.nextDouble() * (homeBounds[1] - homeBounds[0]);
-                homeLat = homeBounds[2] + random.nextDouble() * (homeBounds[3] - homeBounds[2]);
-                homeAttempt++;
-            } while (homeAttempt < 50 && !isValidLocation(homeLon, homeLat));
+            if (geoValidator != null && geoValidator.isOperatingZoneEnabled()) {
+                // WP0: homes (= shift starts) inside the operating zone.
+                org.locationtech.jts.geom.Envelope zoneEnv = geoValidator.getOperatingZoneEnvelope();
+                double[] home = sampleHome(
+                    new double[]{zoneEnv.getMinX(), zoneEnv.getMaxX(), zoneEnv.getMinY(), zoneEnv.getMaxY()},
+                    (lon, lat) -> isValidLocation(lon, lat) && geoValidator.isInOperatingZone(lon, lat),
+                    config.getHomeMaxAttempts(), random);
+                homeLon = home[0];
+                homeLat = home[1];
+            } else {
+                // Unchanged without an operating zone (keeps other cities' random stream).
+                int homeAttempt = 0;
+                double[] homeBounds = getSamplingBounds();
+                do {
+                    homeLon = homeBounds[0] + random.nextDouble() * (homeBounds[1] - homeBounds[0]);
+                    homeLat = homeBounds[2] + random.nextDouble() * (homeBounds[3] - homeBounds[2]);
+                    homeAttempt++;
+                } while (homeAttempt < 50 && !isValidLocation(homeLon, homeLat));
+            }
 
             // 5-type fleet sample from configured shares (DESIGN.md §2.2 formula).
             TaxiType taxiType;
@@ -1002,10 +1018,24 @@ public class TaxiSimulation {
      * nearest hub-zone". Returns null if no hub zones are configured.
      */
     DestinationZone selectNearestHubZone(double lon, double lat) {
+        return nearestZone(destinationZones, lon, lat, true);
+    }
+
+    /** Nearest service-eligible zone (fallback target when no zone scores > 0). */
+    DestinationZone nearestEligibleZone(double lon, double lat) {
+        return nearestZone(destinationZones, lon, lat, false);
+    }
+
+    /**
+     * Nearest zone centre among service-eligible zones (hubs only if hubsOnly);
+     * null if there is none. Without an operating zone every zone is eligible.
+     */
+    static DestinationZone nearestZone(List<DestinationZone> zones, double lon, double lat, boolean hubsOnly) {
         DestinationZone nearest = null;
         double minDist = Double.MAX_VALUE;
-        for (DestinationZone zone : destinationZones) {
-            if (!zone.isTransportHub()) continue;
+        for (DestinationZone zone : zones) {
+            if (hubsOnly && !zone.isTransportHub()) continue;
+            if (!zone.isServiceEligible()) continue;
             double d = zone.getDistanceFromCenter(lon, lat);
             if (d < minDist) {
                 minDist = d;
@@ -1013,6 +1043,93 @@ public class TaxiSimulation {
             }
         }
         return nearest;
+    }
+
+    /**
+     * Uniform point in bounds {minLon, maxLon, minLat, maxLat} that satisfies
+     * acceptable(lon, lat), drawing at most maxAttempts points.
+     *
+     * @throws IllegalStateException if no acceptable point was drawn
+     */
+    static double[] sampleHome(double[] bounds, java.util.function.BiPredicate<Double, Double> acceptable,
+                               int maxAttempts, Random random) {
+        for (int i = 0; i < maxAttempts; i++) {
+            double lon = bounds[0] + random.nextDouble() * (bounds[1] - bounds[0]);
+            double lat = bounds[2] + random.nextDouble() * (bounds[3] - bounds[2]);
+            if (acceptable.test(lon, lat)) return new double[]{lon, lat};
+        }
+        throw new IllegalStateException("No acceptable home location after " + maxAttempts + " attempts");
+    }
+
+    /**
+     * An operating zone needs the spatial layers: without them no point could be
+     * tested, and the run would silently ignore the zone.
+     */
+    static void checkOperatingZoneConfig(TaxiConfig config) {
+        if (!config.getOperatingZoneAdmCodes().isEmpty() && !config.isSpatialValidationEnabled()) {
+            throw new IllegalStateException("operating.zone.adm.codes is set but spatial.validation.enabled=false;"
+                + " the operating zone needs spatial validation");
+        }
+    }
+
+    /**
+     * Search radius for a zone's service point when its centre fails spatial
+     * validation (e.g. Z32 Sumida, inside the 150 m river buffer): more than 3x
+     * the river buffer and well inside the smallest zone radius (0.8 km).
+     * A documented constant, not a calibrated parameter.
+     */
+    static final double ANCHOR_SEARCH_RADIUS_KM = 0.5;
+
+    /**
+     * WP0 eligibility: a zone may be a cruise target or a stand hub only if its
+     * centre is inside the operating zone and a valid point exists within
+     * ANCHOR_SEARCH_RADIUS_KM of the centre (the centre itself if valid). That
+     * point becomes the zone's anchor (deadhead fallback, stand pickup).
+     *
+     * @return true if eligible; the anchor is set only then
+     */
+    static boolean assignAnchor(DestinationZone zone,
+                                java.util.function.BiPredicate<Double, Double> inZone,
+                                java.util.function.BiPredicate<Double, Double> valid,
+                                java.util.function.BiFunction<Double, Double, double[]> project) {
+        double lon = zone.getCenterLon();
+        double lat = zone.getCenterLat();
+        if (!inZone.test(lon, lat)) return false;
+        if (valid.test(lon, lat)) {
+            zone.setAnchor(lon, lat);
+            return true;
+        }
+        double[] p = project.apply(lon, lat);
+        if (p == null || !inZone.test(p[0], p[1])) return false;
+        zone.setAnchor(p[0], p[1]);
+        return true;
+    }
+
+    /** WP0: mark each zone service-eligible (or not) and set its anchor. */
+    private void markServiceEligibility() {
+        if (geoValidator == null || !geoValidator.isOperatingZoneEnabled()) return;
+        List<String> ineligible = new ArrayList<>();
+        int eligibleHubs = 0;
+        for (DestinationZone zone : destinationZones) {
+            boolean ok = assignAnchor(zone, geoValidator::isInOperatingZone, this::isValidLocation,
+                (lon, lat) -> projectToNearestValidCell(lon, lat, ANCHOR_SEARCH_RADIUS_KM));
+            zone.setServiceEligible(ok);
+            if (!ok) {
+                ineligible.add(zone.getZoneId() + " " + zone.getName());
+                continue;
+            }
+            if (zone.isTransportHub()) eligibleHubs++;
+            if (zone.getAnchorLon() != zone.getCenterLon() || zone.getAnchorLat() != zone.getCenterLat()) {
+                double km = calculateDistance(zone.getCenterLon(), zone.getCenterLat(),
+                    zone.getAnchorLon(), zone.getAnchorLat()) / config.getManhattanFactor();
+                System.out.println("[ZONE] " + zone.getZoneId() + " " + zone.getName() + ": centre fails "
+                    + geoValidator.describeValidity(zone.getCenterLon(), zone.getCenterLat())
+                    + "; anchored " + String.format("%.3f km", km) + " away at ("
+                    + String.format("%.5f, %.5f)", zone.getAnchorLon(), zone.getAnchorLat()));
+            }
+        }
+        System.out.println("[ZONE] Service-eligible zones: " + (destinationZones.size() - ineligible.size())
+            + " of " + destinationZones.size() + " (" + eligibleHubs + " hubs); ineligible: " + ineligible);
     }
 
     /**

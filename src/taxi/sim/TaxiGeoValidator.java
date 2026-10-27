@@ -305,7 +305,8 @@ public class TaxiGeoValidator {
         Set<String> missing = new TreeSet<>(admCodes);
         missing.removeAll(found);
         if (!missing.isEmpty()) {
-            System.err.println("[SPATIAL] Warning: operating-zone codes not found in polbnda: " + missing);
+            // A silently smaller zone would mis-state where taxis may operate.
+            throw new IllegalStateException("Operating-zone codes not found in " + path + ": " + missing);
         }
         index.build();
         operatingZoneIndex = index;
@@ -334,6 +335,14 @@ public class TaxiGeoValidator {
     }
 
     public boolean isOperatingZoneEnabled() { return operatingZoneEnabled; }
+
+    /** Which check isValidLocation would fail first (for logs): "valid", "out of city", "water", "river buffer". */
+    public String describeValidity(double lon, double lat) {
+        if (!isWithinCity(lon, lat)) return "out of city";
+        if (!isOnLand(lon, lat)) return "water";
+        if (isNearRiver(lon, lat, riverBufferKm)) return "river buffer";
+        return "valid";
+    }
 
     /** adm_codes actually loaded (empty when the zone is disabled). */
     public Set<String> getOperatingZoneCodes() { return operatingZoneCodes; }

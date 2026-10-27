@@ -1,10 +1,12 @@
 package taxi.sim;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.stream.Collectors;
 
@@ -394,6 +396,8 @@ public class TaxiConfig {
     // ═══ Zone Configuration ═══
     /** CSV filename for zone definitions (loaded relative to configDir). */
     private String zonesFile = "zones.csv";
+    /** Validation baseline CSV (validation.baseline.file); empty = taxi_baseline_<city.name>.csv. */
+    private String validationBaselineFile = "";
 
     /**
      * Private constructor for singleton pattern
@@ -416,6 +420,7 @@ public class TaxiConfig {
      * Load configuration from properties file
      * @param configPath Path to taxi_config.properties
      * @return true if loaded successfully, false otherwise
+     * @throws IllegalArgumentException if validation.baseline.file names a missing or malformed baseline
      */
     public boolean loadFromFile(String configPath) {
         this.configFilePath = configPath;
@@ -451,6 +456,7 @@ public class TaxiConfig {
             loadTransportIndexConfig(props);
             loadSpatialDistributionConfig(props);
             loadZoneEnrichmentConfig(props);
+            loadValidationConfig(props);  // last: it may throw, after every other key is loaded
 
             System.out.println("✓ Configuration loaded successfully from: " + configPath);
             return true;
@@ -735,6 +741,20 @@ public class TaxiConfig {
     private void loadZoneConfig(Properties props) {
         zonesFile = props.getProperty("zones.file", zonesFile);
         System.out.println("  Zones file: " + zonesFile);
+    }
+
+    private void loadValidationConfig(Properties props) {
+        // Default is a constant, not the previous field value (the singleton may be reloaded),
+        // and a rejected file is never kept.
+        validationBaselineFile = "";
+        String file = PathResolver.resolve(props.getProperty("validation.baseline.file", "").trim());
+        if (file.isEmpty()) return;
+        if (!new File(file).isFile()) {
+            throw new IllegalArgumentException("validation.baseline.file not found: " + file);
+        }
+        new TaxiValidationEngine().loadBaseline(file);  // a malformed baseline fails here, not after the run
+        validationBaselineFile = file;
+        System.out.println("  Validation baseline: " + file);
     }
 
     private void loadSpatialConfig(Properties props) {
@@ -1041,6 +1061,16 @@ public class TaxiConfig {
     public double getAttractivenessBeta4() { return attractivenessBeta4; }
 
     public String getZonesFile() { return zonesFile; }
+
+    /**
+     * Baseline CSV the validation step grades against, resolved from the working
+     * directory: validation.baseline.file, or config/taxi/validation/taxi_baseline_<city.name>.csv.
+     */
+    public String getValidationBaselineFile() {
+        return validationBaselineFile.isEmpty()
+            ? "config/taxi/validation/taxi_baseline_" + cityName.toLowerCase(Locale.ROOT) + ".csv"
+            : validationBaselineFile;
+    }
 
     // Spatial validation getters
     public boolean isSpatialValidationEnabled() { return spatialValidationEnabled; }

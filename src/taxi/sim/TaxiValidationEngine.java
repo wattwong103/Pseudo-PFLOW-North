@@ -21,17 +21,53 @@ import util.MetricsDashboard;
  */
 public class TaxiValidationEngine {
 
+    // ── How a baseline row is graded (optional column 10, "bound") ──
+
+    public enum Bound {
+        /** |actual - target| within tolerance x |target|; a zero target needs a zero actual. The default. */
+        TWO_SIDED,
+        /** actual >= target; the tolerance is not used. */
+        AT_LEAST,
+        /** actual <= target; the tolerance is not used. */
+        AT_MOST;
+
+        boolean passes(double actual, double target, double toleranceFraction) {
+            if (!Double.isFinite(actual)) return false;
+            switch (this) {
+                case AT_LEAST: return actual >= target;
+                case AT_MOST: return actual <= target;
+                default:
+                    double error = Math.abs(actual - target);
+                    return target == 0 ? (actual == 0) : (error <= toleranceFraction * Math.abs(target));
+            }
+        }
+
+        /** two_sided, at_least or at_most, in any case; empty means TWO_SIDED. */
+        static Bound parse(String s) {
+            if (s.isEmpty()) return TWO_SIDED;
+            for (Bound b : values()) {
+                if (b.name().equalsIgnoreCase(s)) return b;
+            }
+            throw new IllegalArgumentException("unknown bound '" + s + "' (two_sided, at_least or at_most)");
+        }
+    }
+
     // ── Baseline metric (one CSV row) ──
 
     private static class BaselineMetric {
         final String name, category, unit, source, notes, priority;
         final double surveyValue, tolerancePct;
+        /** Optional column 9: A, B or D; empty keeps the tier TaxiValidationTiers defines. */
+        final String tier;
+        /** Optional column 10; TWO_SIDED when absent. */
+        final Bound bound;
 
         BaselineMetric(String name, String category, double surveyValue, String unit,
-                       double tolerancePct, String source, String notes, String priority) {
+                       double tolerancePct, String source, String notes, String priority,
+                       String tier, Bound bound) {
             this.name = name; this.category = category; this.surveyValue = surveyValue;
             this.unit = unit; this.tolerancePct = tolerancePct; this.source = source;
-            this.notes = notes; this.priority = priority;
+            this.notes = notes; this.priority = priority; this.tier = tier; this.bound = bound;
         }
 
         double toleranceFraction() { return tolerancePct / 100.0; }
@@ -42,17 +78,25 @@ public class TaxiValidationEngine {
     public static class ValidationResult {
         public final String metric, category;
         public final double actual, target, tolerance;
+        public final Bound bound;
         public final boolean passed;
 
         public ValidationResult(String metric, String category, double actual,
                                 double target, double tolerance) {
-            this.metric = metric; this.category = category;
-            this.actual = actual; this.target = target; this.tolerance = tolerance;
-            double error = Math.abs(actual - target);
-            this.passed = target == 0 ? (actual == 0) : (error <= tolerance * Math.abs(target));
+            this(metric, category, actual, target, tolerance, Bound.TWO_SIDED);
         }
 
+        public ValidationResult(String metric, String category, double actual,
+                                double target, double tolerance, Bound bound) {
+            this.metric = metric; this.category = category;
+            this.actual = actual; this.target = target; this.tolerance = tolerance;
+            this.bound = bound;
+            this.passed = bound.passes(actual, target, tolerance);
+        }
+
+        /** Relative distance from the target; a one-sided row has none while its bound holds. */
         public double getErrorPercent() {
+            if (bound != Bound.TWO_SIDED && passed) return 0.0;
             if (target == 0) return actual == 0 ? 0.0 : 100.0;
             return Math.abs(actual - target) / Math.abs(target) * 100.0;
         }
@@ -60,6 +104,10 @@ public class TaxiValidationEngine {
         @Override
         public String toString() {
             String icon = passed ? "PASS" : "FAIL";
+            if (bound != Bound.TWO_SIDED) {
+                return String.format("  %-40s %14.2f  (target: %s %11.2f one-sided)  %s",
+                        metric, actual, bound == Bound.AT_LEAST ? ">=" : "<=", target, icon);
+            }
             return String.format("  %-40s %14.2f  (target: %14.2f +/-%3.0f%%)  [error: %5.1f%%]  %s",
                     metric, actual, target, tolerance * 100, getErrorPercent(), icon);
         }
@@ -147,7 +195,14 @@ public class TaxiValidationEngine {
 
     /**
      * Load baseline metrics from CSV file.
-     * Format: metric_name,category,survey_value,unit,tolerance_pct,source,notes,priority
+     * Format: metric_name,category,survey_value,unit,tolerance_pct,source,notes,priority[,tier,bound]
+     * The split is a plain split(","), so a row whose field count differs from the
+     * header's (a comma in notes, a truncated row) is rejected rather than read with
+     * shifted columns. Only blank lines are skipped: a dropped row could take an
+     * operator-assigned Tier A or B constraint out of the gate.
+     *
+     * @throws IllegalArgumentException on such a row, a repeated metric, a missing
+     *         or non-finite number, an unknown tier or an unknown bound
      */
     public void loadBaseline(String csvPath) {
         File file = new File(csvPath);
@@ -156,20 +211,38 @@ public class TaxiValidationEngine {
             return;
         }
         try (BufferedReader br = new BufferedReader(new FileReader(file))) {
-            String line = br.readLine(); // skip header
+            String header = br.readLine();
+            int fields = header == null ? 0 : header.split(",", -1).length;
+            if (header != null && fields < 8) {
+                throw new IllegalArgumentException(csvPath + ": header has " + fields + " fields, needs at least 8");
+            }
+            String line;
+            int lineNo = 1;
             while ((line = br.readLine()) != null) {
+                lineNo++;
+                if (line.trim().isEmpty()) continue;
                 String[] parts = line.split(",", -1);
-                if (parts.length < 8) continue;
+                if (parts.length != fields) {
+                    throw new IllegalArgumentException(String.format(
+                        "%s line %d: %d fields, header has %d (a comma inside a field?): %s",
+                        csvPath, lineNo, parts.length, fields, line));
+                }
+                String name = parts[0].trim();
+                if (baseline.stream().anyMatch(bm -> bm.name.equals(name))) {
+                    throw new IllegalArgumentException(csvPath + " line " + lineNo + ": repeated metric " + name);
+                }
                 try {
                     baseline.add(new BaselineMetric(
-                            parts[0].trim(), parts[1].trim(),
-                            Double.parseDouble(parts[2].trim()),
+                            name, parts[1].trim(),
+                            finite(parts[2].trim(), "survey_value"),
                             parts[3].trim(),
-                            Double.parseDouble(parts[4].trim()),
-                            parts[5].trim(), parts[6].trim(), parts[7].trim()
+                            finite(parts[4].trim(), "tolerance_pct"),
+                            parts[5].trim(), parts[6].trim(), parts[7].trim(),
+                            parts.length > 8 ? parseTier(parts[8].trim()) : "",
+                            parts.length > 9 ? Bound.parse(parts[9].trim()) : Bound.TWO_SIDED
                     ));
-                } catch (NumberFormatException e) {
-                    System.err.println("[VALIDATION] Skipping malformed line: " + line);
+                } catch (IllegalArgumentException e) {  // includes NumberFormatException
+                    throw new IllegalArgumentException(csvPath + " line " + lineNo + ": " + e.getMessage(), e);
                 }
             }
             System.out.printf("[VALIDATION] Loaded %d baseline metrics from %s%n", baseline.size(), csvPath);
@@ -201,7 +274,17 @@ public class TaxiValidationEngine {
         lastMetrics = metrics;
         lastZoneEnabled = geoValidator != null && geoValidator.isOperatingZoneEnabled();
 
-        // Compare each baseline metric against computed values
+        // For runtime-computed targets: scale by fleet size × configured trips average
+        return new ValidationReport(compare(metrics, config.getTaxiFleetSize() * config.getTaxiTripsAverage()));
+    }
+
+    /**
+     * Compares each baseline row with its computed value under the row's bound;
+     * a row with no computed value is skipped.
+     *
+     * @param totalTripsTarget target for a "Total Passenger Trips" row whose survey value is 0
+     */
+    List<ValidationResult> compare(Map<String, Double> metrics, double totalTripsTarget) {
         List<ValidationResult> results = new ArrayList<>();
         for (BaselineMetric bm : baseline) {
             Double actual = metrics.get(bm.name);
@@ -209,32 +292,53 @@ public class TaxiValidationEngine {
                 System.err.println("[VALIDATION] No computed value for metric: " + bm.name);
                 continue;
             }
-
-            // For runtime-computed targets: scale by fleet size × configured trips average
             double target = bm.surveyValue;
             if ("Total Passenger Trips".equals(bm.name) && target == 0.0) {
-                target = config.getTaxiFleetSize() * config.getTaxiTripsAverage();
+                target = totalTripsTarget;
             }
-
-            results.add(new ValidationResult(bm.name, bm.category, actual, target, bm.toleranceFraction()));
+            results.add(new ValidationResult(bm.name, bm.category, actual, target, bm.toleranceFraction(), bm.bound));
         }
-
-        return new ValidationReport(results);
+        return results;
     }
 
     /**
-     * Writes validation_tiers.csv (the tiered bar) for the last validate() call,
-     * using the loaded baseline rows as Tier B targets and tolerances.
+     * Writes validation_tiers.csv (the tiered bar) for the last validate() call;
+     * the loaded baseline rows give each row's target, tolerance, bound and tier.
      */
     public void writeTiers(String csvPath) throws IOException {
         if (lastMetrics == null) throw new IllegalStateException("validate() has not been called");
-        Map<String, double[]> targets = new HashMap<>();
-        for (BaselineMetric bm : baseline) {
-            targets.put(bm.name, new double[] {bm.surveyValue, bm.tolerancePct});
-        }
-        List<TaxiValidationTiers.TierRow> rows = TaxiValidationTiers.build(lastMetrics, targets, lastZoneEnabled);
+        List<TaxiValidationTiers.TierRow> rows =
+            TaxiValidationTiers.build(lastMetrics, baselineTargets(), lastZoneEnabled);
         TaxiValidationTiers.writeCsv(rows, csvPath);
         System.out.println("[VALIDATION] " + TaxiValidationTiers.summary(rows) + " -> " + csvPath);
+    }
+
+    /** The loaded rows as the tier bar reads them, in file order; a repeated name keeps its last row. */
+    Map<String, TaxiValidationTiers.Target> baselineTargets() {
+        Map<String, TaxiValidationTiers.Target> targets = new LinkedHashMap<>();
+        for (BaselineMetric bm : baseline) {
+            targets.put(bm.name, new TaxiValidationTiers.Target(bm.surveyValue, bm.tolerancePct, bm.tier, bm.bound));
+        }
+        return targets;
+    }
+
+    /** Metric names of the loaded rows, in file order. */
+    List<String> baselineMetricNames() {
+        return baseline.stream().map(bm -> bm.name).collect(Collectors.toList());
+    }
+
+    /** A finite number; a blank, unreadable or infinite value would grade wrongly or drop the row. */
+    private static double finite(String s, String column) {
+        double v = Double.parseDouble(s);
+        if (!Double.isFinite(v)) throw new IllegalArgumentException(column + " is not finite: " + s);
+        return v;
+    }
+
+    /** A, B or D in any case (Tier C is computed by the Python harness); empty keeps the defined tier. */
+    private static String parseTier(String s) {
+        String tier = s.toUpperCase(Locale.ROOT);
+        if (tier.isEmpty() || tier.equals("A") || tier.equals("B") || tier.equals("D")) return tier;
+        throw new IllegalArgumentException("unknown tier '" + s + "' (A, B, D or empty)");
     }
 
     /**

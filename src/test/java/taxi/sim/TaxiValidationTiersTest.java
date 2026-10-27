@@ -26,13 +26,17 @@ class TaxiValidationTiersTest {
         return m;
     }
 
-    static Map<String, double[]> baseline() {
-        Map<String, double[]> b = new HashMap<>();
-        b.put("Fleet Operating Rate", new double[] {68.6, 5});
-        b.put("Avg Passenger Trips per Taxi", new double[] {25.3, 10});
-        b.put("Total Daily Revenue per Taxi", new double[] {56_139.0, 15});
-        b.put("Nearby Trip Ratio", new double[] {80.0, 20});
-        b.put("Trips Within City Bounds", new double[] {99.0, 2});
+    static Map<String, TaxiValidationTiers.Target> baseline() {
+        Map<String, TaxiValidationTiers.Target> b = new HashMap<>();
+        b.put("Fleet Operating Rate", TaxiValidationTiers.Target.of(68.6, 5));
+        b.put("Avg Passenger Trips per Taxi", TaxiValidationTiers.Target.of(25.3, 10));
+        b.put("Total Daily Revenue per Taxi", TaxiValidationTiers.Target.of(56_139.0, 15));
+        b.put("Nearby Trip Ratio", TaxiValidationTiers.Target.of(80.0, 20));
+        b.put("Trips Within City Bounds", TaxiValidationTiers.Target.of(99.0, 2));
+        b.put("Pickups Within Operating Zone",
+            new TaxiValidationTiers.Target(99.0, 0, "A", TaxiValidationEngine.Bound.AT_LEAST));
+        b.put("Both Ends Outside Operating Zone",
+            new TaxiValidationTiers.Target(0.5, 0, "A", TaxiValidationEngine.Bound.AT_MOST));
         return b;
     }
 

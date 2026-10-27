@@ -1643,8 +1643,7 @@ public class TaxiSimulation {
         }
 
         // Validation against baseline metrics
-        String baselinePath = "config/taxi/validation/taxi_baseline_" +
-                config.getCityName().toLowerCase() + ".csv";
+        String baselinePath = config.getValidationBaselineFile();
         File baselineFile = new File(baselinePath);
         if (baselineFile.exists()) {
             TaxiValidationEngine validator = new TaxiValidationEngine();
@@ -1660,8 +1659,8 @@ public class TaxiSimulation {
             }
         } else {
             System.out.println("\n[VALIDATION] No baseline CSV found at: " + baselinePath);
-            System.out.println("[VALIDATION] Skipping validation (create config/taxi/validation/taxi_baseline_"
-                    + config.getCityName().toLowerCase() + ".csv to enable).");
+            System.out.println("[VALIDATION] Skipping validation (create " + baselinePath
+                    + " or set validation.baseline.file to enable).");
         }
 
         System.out.println("\n[COMPLETE] Output: " + runDir);

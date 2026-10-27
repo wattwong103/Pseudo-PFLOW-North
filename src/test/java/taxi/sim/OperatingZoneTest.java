@@ -69,6 +69,13 @@ class OperatingZoneTest {
     }
 
     @Test
+    void municipalityCodeIsReportedForPointsInTheZone() {
+        assertEquals("13101", validator.operatingZoneCodeAt(139.7528, 35.6940));  // Chiyoda
+        assertEquals("13203", validator.operatingZoneCodeAt(139.5660, 35.7180));  // Musashino
+        org.junit.jupiter.api.Assertions.assertNull(validator.operatingZoneCodeAt(139.3160, 35.6664));
+    }
+
+    @Test
     void loadsAll25CodesAs37Polygons() {
         assertTrue(validator.isOperatingZoneEnabled());
         assertEquals(SPECIAL_WARDS_ZONE, validator.getOperatingZoneCodes());

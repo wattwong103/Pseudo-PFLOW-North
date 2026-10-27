@@ -96,6 +96,8 @@ public class TaxiSimulation {
     private DiagnosticWriter diagnosticWriter;
     /** WP0: empty-leg path decomposition from the shift simulator (dashboard). */
     private EmptyLegStats emptyLegStats;
+    /** WP0: loaded-leg drop-off outcomes by pickup border group (zone runs only). */
+    private final LoadedLegBorderStats loadedLegBorderStats = new LoadedLegBorderStats();
     /** B7: pre-computed stratified sample of taxi IDs for diagnostic emit. */
     private java.util.Set<Integer> diagnosticSampleIds;
 
@@ -1311,12 +1313,22 @@ public class TaxiSimulation {
         final double dropLon = pickupLon + dLon;
         final double dropLat = pickupLat + dLat;
 
+        // WP0 diagnostic: outcome by pickup municipality (zone runs only; no RNG).
+        final String pickupCode = geoValidator != null && geoValidator.isOperatingZoneEnabled()
+            ? geoValidator.operatingZoneCodeAt(pickupLon, pickupLat) : null;
+        final boolean trackBorder = geoValidator != null && geoValidator.isOperatingZoneEnabled();
+
         // Validate; project to nearest valid cell if invalid.
         double[] result;
+        boolean projected = false;
         if (geoValidator != null && !geoValidator.isValidLocation(dropLon, dropLat)) {
             result = projectToNearestValidCell(dropLon, dropLat,
                 config.getProjectionRadiusKm());  // may return null → caller falls back
-            if (result == null) return null;
+            if (result == null) {
+                if (trackBorder) loadedLegBorderStats.record(pickupCode, LoadedLegBorderStats.Outcome.FAILED);
+                return null;
+            }
+            projected = true;
         } else {
             result = new double[]{dropLon, dropLat};
         }
@@ -1329,8 +1341,11 @@ public class TaxiSimulation {
         // current position; cheap retry budget per cycle).
         double finalRoadKm = TaxiTrip.distanceKm(pickupLon, pickupLat, result[0], result[1]);
         if (finalRoadKm < minRoad) {
+            if (trackBorder) loadedLegBorderStats.record(pickupCode, LoadedLegBorderStats.Outcome.FAILED);
             return null;
         }
+        if (trackBorder) loadedLegBorderStats.record(pickupCode,
+            projected ? LoadedLegBorderStats.Outcome.PROJECTED : LoadedLegBorderStats.Outcome.DIRECT);
         return result;
     }
 
@@ -1535,6 +1550,7 @@ public class TaxiSimulation {
                     TaxiSpatialMetrics.pickupInsideShare(allTrips, geoValidator::isInOperatingZone));
             metrics.put("SPATIAL.operating_zone_both_outside_pct",
                     TaxiSpatialMetrics.bothEndsOutsideShare(allTrips, geoValidator::isInOperatingZone));
+            metrics.putAll(loadedLegBorderStats.toDashboardRows());
         }
         metrics.put("SPATIAL.nearby_trip_pct",
                 TaxiSpatialMetrics.nearbyTripRatio(taxiFleet, config.getNearbyTripRadiusKm()));

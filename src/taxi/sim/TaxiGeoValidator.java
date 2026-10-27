@@ -294,9 +294,10 @@ public class TaxiGeoValidator {
         for (SimpleFeature feature : features) {
             Geometry geom = (Geometry) feature.getDefaultGeometry();
             if (geom == null) continue;
-            index.insert(geom.getEnvelopeInternal(), prepared.create(geom));
+            String code = feature.getAttribute("adm_code").toString().trim();
+            index.insert(geom.getEnvelopeInternal(), new ZonePolygon(code, prepared.create(geom)));
             envelope.expandToInclude(geom.getEnvelopeInternal());
-            found.add(feature.getAttribute("adm_code").toString().trim());
+            found.add(code);
             operatingZonePolygonCount++;
         }
         if (found.isEmpty()) {
@@ -323,15 +324,32 @@ public class TaxiGeoValidator {
      * True if the point lies in the operating zone, or if no zone is loaded.
      * Exact point-in-polygon on every call (no cache).
      */
-    @SuppressWarnings("unchecked")
     public boolean isInOperatingZone(double lon, double lat) {
         if (!operatingZoneEnabled) return true;
+        return operatingZoneCodeAt(lon, lat) != null;
+    }
+
+    /** adm_code of the operating-zone municipality containing the point; null if outside or disabled. */
+    @SuppressWarnings("unchecked")
+    public String operatingZoneCodeAt(double lon, double lat) {
+        if (!operatingZoneEnabled) return null;
         Point point = geometryFactory.createPoint(new Coordinate(lon, lat));
-        List<PreparedGeometry> candidates = operatingZoneIndex.query(point.getEnvelopeInternal());
-        for (PreparedGeometry geom : candidates) {
-            if (geom.covers(point)) return true;
+        List<ZonePolygon> candidates = operatingZoneIndex.query(point.getEnvelopeInternal());
+        for (ZonePolygon zp : candidates) {
+            if (zp.geometry.covers(point)) return zp.admCode;
         }
-        return false;
+        return null;
+    }
+
+    /** One operating-zone polygon with its municipality code. */
+    private static final class ZonePolygon {
+        final String admCode;
+        final PreparedGeometry geometry;
+
+        ZonePolygon(String admCode, PreparedGeometry geometry) {
+            this.admCode = admCode;
+            this.geometry = geometry;
+        }
     }
 
     public boolean isOperatingZoneEnabled() { return operatingZoneEnabled; }

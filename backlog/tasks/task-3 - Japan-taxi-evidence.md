@@ -28,11 +28,16 @@ scores. Source data and research artifacts remain in the parent workspace.
   booleans, non-finite/negative values, empty input and schema mistakes.
 - [x] #5 Run the audit on existing Tokyo and Osaka exports, record checksums and
   limitations, and obtain independent cross-harness review before the PR.
+  (The checksums were first recorded on 2026-10-28, under Verification.)
+- [x] #6 The tests pin every reported output: deleting or swapping any one
+  output or check makes a test fail (review of 2026-10-28).
 
 ## Plan
 
 1. Add tests then `scripts/validate/taxi_trip_evidence.py`; reuse the existing
    skill helper for run_metadata/validation.csv score consistency.
+   *Not done: the auditor reads only the trip file (see Verification,
+   2026-10-28).*
 2. Document the CLI and its exclusions. The simulator and protected per-city
    baselines are outside this change. Experimental runs require guardian review.
 3. Run pytest, then the repository compile/JUnit checklist where supported;
@@ -45,6 +50,8 @@ public-statistics cohorts; Osaka stand-window export and held-out validation;
 equal-information baselines and multi-seed cross-city experiments.
 
 ## Verification
+
+### 2026-09-20 (as first written; the diff alone cannot confirm these claims)
 
 `python -m pytest scripts/validate/test_taxi_trip_evidence.py -q`: 29 passed.
 Independent inspections completed for historical and freshly compiled Tokyo and
@@ -63,3 +70,50 @@ fallback reviewed all four files. CLI/encoding/serialization regression tests
 and integer-identity documentation address its non-blocking comments. The
 separate guardian review's hash race was also fixed. Repository build issues
 remain a follow-up, not changes to this Python-only diff.
+
+### 2026-10-28 re-check after #7 (Claude Code)
+
+This branch merges cleanly with `pseudo-pflow-v3.2-unified` at `219e78d`.
+`TaxiDataExporter.java` has not changed since the merge-base, so the
+16-column contract still holds.
+
+The auditor (`add138d`, unchanged since) was run on the three exports from
+the clean build of `9e75801`, seed 12345 (`PFLOW/output/taxi_wp0/`, local).
+It accepted all three. Each hash below equals the reference trip hash
+recorded for its run:
+
+| Run | Rows | sha256 |
+|---|---:|---|
+| Tokyo, zone on, e-Stat zones | 1,345,212 | `8dd1a43282070ca4cb0c7f5d3f8b4da868771bc6b5432eb92b21459b99711bf2` |
+| Tokyo, zone off, heuristic zones | 1,295,767 | `f9769fbe8733e0cca2b61f85a1d571c0fb973180bfe64a014fcc8b218eb48d6d` |
+| Osaka | 468,113 | `bd55aec66aacb634a832c57e4ef1c1e37f377ceb33c53c9aa5c042ebc93de40e` |
+
+The two runs that the base already contained (Tokyo zone off and Osaka) have
+the same row counts as reported on 2026-09-20.
+
+On the Tokyo zone-on run, the auditor reproduces the engine's
+`validation_tiers.csv` from rows alone:
+- loaded-distance fraction 0.490990, against σ̂ 49.0990
+- fare per occupied trip 1877.0498, against the average fare
+- mean occupied km 4.3532, against the average trip distance
+
+It counts 24,626 taxis with rows, against the active fleet of 24,697. Divided
+by that roster figure, the totals give the engine's trips per taxi (26.5847),
+km per taxi (235.706) and revenue per taxi (49,900.86). The roster
+denominator stays outside the tool, as the documentation says.
+
+The 2026-09-20 figures of 19/19 (Tokyo) and 12/17 (Osaka) used the old bar.
+Since #7 the taxi bar is tiered. Tokyo zone on scores Tier A 10/10 and Tier B
+7/7, with a legacy grade of A 18/19. Osaka fails the tier gate because it
+runs a 5-type fleet against a 3-type baseline.
+
+Plan step 1 was skipped. Since #7, the workspace evidence step
+(`pflow-run-evidence`) checks run metadata and `validation_tiers.csv`. This
+auditor checks the trip file only, so the two are complementary and no
+follow-up is needed here.
+
+The repository compile and Maven blockers above were not re-checked.
+
+Review fix (`7f643af`): the 2026-10-28 review found that 12 of 15 one-line
+mutants of the auditor passed all 29 tests. The new tests catch all 15, and
+`pytest` gives 36 passed. A Codex review of the fix commits is pending.

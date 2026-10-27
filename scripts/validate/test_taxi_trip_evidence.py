@@ -43,6 +43,42 @@ def test_counts_keep_calendar_days_distinct_from_shifts(tmp_path):
     assert result["sha256"] and "active_fleet" not in result
 
 
+def test_golden_result_pins_every_output(tmp_path):
+    """Two taxis over two days; no two outputs share a value, so a swap or a dropped key fails."""
+    path = write_csv(tmp_path, [
+        row(),
+        row(id="2", passenger_in="false", purpose="0", distance_km="6.00", fare_yen="0",
+            starttime="3600", starttime_h="01:00:00", simulation_day="1"),
+        row(id="3", taxi_id="20", distance_km="2.50", fare_yen="1000.00",
+            is_night_trip="false", starttime="36000", starttime_h="10:00:00"),
+        row(id="4", taxi_id="20", passenger_in="false", purpose="0", distance_km="1.50",
+            fare_yen="0", is_night_trip="false", starttime="37800", starttime_h="10:30:00"),
+        row(id="5", taxi_id="20", distance_km="1.25", fare_yen="600.00",
+            starttime="7200", starttime_h="02:00:00", simulation_day="1"),
+    ])
+    result = MODULE.audit(path)
+    limitations = result.pop("limitations")
+    assert result == {
+        "schema": "taxi-trip-evidence-v1", "input": str(path.resolve()),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "rows": 5, "occupied_trips": 3, "empty_trips": 2,
+        "observed_taxis": 2, "observed_taxi_calendar_days": 4,
+        "rows_by_simulation_day": {0: 3, 1: 2},
+        "occupied_distance_km": 7.75, "empty_distance_km": 7.5,
+        "loaded_distance_fraction": 7.75 / 15.25,
+        "mean_occupied_distance_km": 7.75 / 3,
+        "exported_fare_yen": 3600.0,
+    }
+    assert limitations and all(isinstance(text, str) for text in limitations)
+
+
+def test_total_overflow_rejected(tmp_path):
+    huge = "1" + "0" * 308 + ".00"  # finite in each row; two of them overflow the total
+    path = write_csv(tmp_path, [row(distance_km=huge), row(id="2", distance_km=huge)])
+    with pytest.raises(ValueError, match="overflow"):
+        MODULE.audit(path)
+
+
 @pytest.mark.parametrize("changes", [
     {"passenger_in": "1"}, {"is_night_trip": "TRUE"}, {"distance_km": "nan"},
     {"fare_yen": "inf"}, {"distance_km": "-1"}, {"fare_yen": "-1"},
@@ -51,6 +87,10 @@ def test_counts_keep_calendar_days_distinct_from_shifts(tmp_path):
     {"simulation_day": "-1"}, {"id": "-1"}, {"taxi_id": "-1"},
     {"purpose": "0"}, {"transport_mode": "3"}, {"occupation": "1"},
     {"passenger_in": "false", "purpose": "0"},
+    # Each case below is caught by exactly one check, so deleting that check fails the test.
+    {"starttime": "86400", "starttime_h": "24:00:00"},
+    {"passenger_in": "1", "purpose": "0", "fare_yen": "0"},
+    {"end_lon": "181"}, {"start_lon": "-181"}, {"start_lat": "91"},
 ])
 def test_rejects_invalid_rows(tmp_path, changes):
     with pytest.raises(ValueError, match="row 2"):

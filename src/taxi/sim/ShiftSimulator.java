@@ -81,8 +81,8 @@ class ShiftSimulator {
     private final double emptyMu;
     private final double emptySigma;
     // Empty-leg bounds (DESIGN.md §2.6: [0.3, 12] km road-km).
-    private static final double EMPTY_MIN_ROAD_KM = 0.3;
-    private static final double EMPTY_MAX_ROAD_KM = 12.0;
+    static final double EMPTY_MIN_ROAD_KM = 0.3;
+    static final double EMPTY_MAX_ROAD_KM = 12.0;
 
     // B3 / Phase 6: pre-parsed PRHS windows filtered to today's day-of-week.
     // Empty list ⇒ no PRHS operating today (Sun in R8 contraction, etc.) ⇒ all
@@ -162,6 +162,10 @@ class ShiftSimulator {
 
         // B7: cycle counter for diagnostic emit and end-of-shift marker.
         int cycleIdx = 0;
+        // WP0: the latest empty leg not yet followed by a passenger leg. If the
+        // next cycle starts, or the shift ends, first, it is an orphan.
+        EmptyLegPath pendingEmptyPath = null;
+        double pendingEmptyKm = 0.0;
         boolean shiftEndEmitted = false;  // sentinel to avoid duplicate SHIFT_END_MARKER
         final boolean diagnose = diagnostics != null && diagnostics.isEnabled()
             && diagnosticSampleIds != null && diagnosticSampleIds.contains(taxi.getTaxiId());
@@ -251,15 +255,19 @@ class ShiftSimulator {
             emptyTravelTime = TaxiTrip.estimateTravelTime(emptyRoadKm);
 
             // Emit empty-trip record for the cruise (above threshold).
-            final boolean emptyLegRecorded = emptyRoadKm > emptyTripThresholdKm;
-            if (emptyLegRecorded) {
+            if (pendingEmptyPath != null) {
+                emptyLegStats.markOrphan(pendingEmptyPath, pendingEmptyKm, false);
+            }
+            if (emptyRoadKm > emptyTripThresholdKm) {
                 emitEmptyTrip(taxi, curLon, curLat, pickupLon, pickupLat, currentTime, emptyTravelTime);
                 TaxiGeoValidator zoneCheck = host.getGeoValidator();
                 emptyLegStats.record(emptyLegPath, emptyRoadKm,
                     zoneCheck == null || zoneCheck.isInOperatingZone(curLon, curLat));
             } else {
-                emptyLegStats.recordUnrecorded(emptyRoadKm);
+                emptyLegStats.recordUnrecorded(emptyLegPath, emptyRoadKm);
             }
+            pendingEmptyPath = emptyLegPath;
+            pendingEmptyKm = emptyRoadKm;
             currentTime += emptyTravelTime;
             // B7: per-cycle EMPTY_LEG record (always recorded, even sub-threshold).
             if (diagnose) {
@@ -295,7 +303,6 @@ class ShiftSimulator {
             // --- 3. OCCUPIED loaded leg ---
             double[] dropoff = host.sampleLogNormalLoadedLeg(pickupLon, pickupLat);
             if (dropoff == null) {
-                if (emptyLegRecorded) emptyLegStats.markOrphan(emptyRoadKm);
                 // B7.3: Projection failed even after spiral. Previously this
                 // ended the entire shift, costing ~36% of all cycles per
                 // diagnostic.csv evidence. Instead, we now skip ONLY this
@@ -358,6 +365,7 @@ class ShiftSimulator {
             passengerTrip.setAssignedTaxiId(taxi.getTaxiId());
             passengerTrip.setStatus(TaxiTrip.TripStatus.COMPLETED);
             taxi.assignTrip(passengerTrip);
+            pendingEmptyPath = null;
             host.recordPassengerTripOutput(passengerTrip);
             host.recordPickupMode(type, pickupMode);
             // B7: per-cycle LOADED_LEG record. Includes pickup_wait + travel.
@@ -373,6 +381,9 @@ class ShiftSimulator {
             curLat = dropLat;
             currentTime = dropoffTime + config.getShiftBreakTimeSeconds();
             cycleIdx++;
+        }
+        if (pendingEmptyPath != null) {
+            emptyLegStats.markOrphan(pendingEmptyPath, pendingEmptyKm, true);
         }
         // Natural exit fallback: only emit if no break path already did.
         if (diagnose && !shiftEndEmitted) {

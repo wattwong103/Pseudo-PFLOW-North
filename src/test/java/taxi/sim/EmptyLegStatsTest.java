@@ -56,12 +56,60 @@ class EmptyLegStatsTest {
     void orphansAndUnrecordedLegsAreTalliedApartFromPaths() {
         EmptyLegStats s = new EmptyLegStats();
         s.record(EmptyLegPath.FIRST_DRAW, 2.5, true);
-        s.markOrphan(2.5);
-        s.recordUnrecorded(0.03);
+        s.markOrphan(EmptyLegPath.FIRST_DRAW, 2.5, false);
+        s.recordUnrecorded(EmptyLegPath.STAY_PUT, 0.0);
         assertEquals(1, s.totalCount());
         assertEquals(2.5, s.totalKm(), 1e-12);
         assertEquals(1, s.orphanCount());
         assertEquals(2.5, s.orphanKm(), 1e-12);
         assertEquals(1, s.unrecordedCount());
+        assertEquals(1, s.unrecordedCount(EmptyLegPath.STAY_PUT));
+    }
+
+    @Test
+    void orphansSplitByPathAndByEndOfShift() {
+        EmptyLegStats s = new EmptyLegStats();
+        s.markOrphan(EmptyLegPath.STAND, 7.0, true);
+        s.markOrphan(EmptyLegPath.FIRST_DRAW, 3.0, true);
+        s.markOrphan(EmptyLegPath.FIRST_DRAW, 2.0, false);
+        assertEquals(3, s.orphanCount());
+        assertEquals(2, s.orphanCount(true));
+        assertEquals(1, s.orphanCount(false));
+        assertEquals(2, s.orphanCount(EmptyLegPath.FIRST_DRAW));
+        assertEquals(5.0, s.orphanKm(EmptyLegPath.FIRST_DRAW), 1e-12);
+    }
+
+    @Test
+    void impliedPassengerLegsReconcileRecordedPlusUnrecordedMinusOrphans() {
+        EmptyLegStats s = new EmptyLegStats();
+        for (int i = 0; i < 5; i++) s.record(EmptyLegPath.FIRST_DRAW, 1.0, true);
+        s.recordUnrecorded(EmptyLegPath.STAND, 0.0);
+        s.markOrphan(EmptyLegPath.FIRST_DRAW, 1.0, true);
+        s.markOrphan(EmptyLegPath.STAND, 0.0, false);
+        assertEquals(4, s.impliedPassengerLegs());
+    }
+
+    @Test
+    void legsOverTwelveKmAreCountedPerPath() {
+        EmptyLegStats s = new EmptyLegStats();
+        s.record(EmptyLegPath.STAND, 11.9, true);
+        s.record(EmptyLegPath.STAND, 12.5, true);
+        s.record(EmptyLegPath.STAND, 78.5, false);
+        assertEquals(2, s.countOver(EmptyLegPath.STAND, 12.0));
+    }
+
+    @Test
+    void ksStatisticIsSmallForTruncatedLognormalQuantilesAndLargeForAShift() {
+        double mu = Math.log(5.1) - 0.5 * 0.7 * 0.7;
+        EmptyLegStats exact = new EmptyLegStats();
+        EmptyLegStats shifted = new EmptyLegStats();
+        int n = 2000;
+        for (int i = 1; i <= n; i++) {
+            double q = EmptyLegStats.truncatedLognormalQuantile((i - 0.5) / n, mu, 0.7, 0.3, 12.0);
+            exact.record(EmptyLegPath.FIRST_DRAW, q, true);
+            shifted.record(EmptyLegPath.FIRST_DRAW, q * 1.3, true);
+        }
+        assertEquals(0.0, exact.ksFirstDraw(mu, 0.7, 0.3, 12.0), 0.002);
+        org.junit.jupiter.api.Assertions.assertTrue(shifted.ksFirstDraw(mu, 0.7, 0.3, 12.0) > 0.1);
     }
 }

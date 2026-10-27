@@ -1422,7 +1422,14 @@ public class TaxiSimulation {
         metrics.put("SPATIAL.nearby_trip_pct",
                 TaxiSpatialMetrics.nearbyTripRatio(taxiFleet, config.getNearbyTripRadiusKm()));
         metrics.put("TEMPORAL.vacancy_time_pct", TaxiSpatialMetrics.vacancyTimeShare(taxiFleet));
-        if (emptyLegStats != null) metrics.putAll(emptyLegStats.toDashboardRows());
+        if (emptyLegStats != null) {
+            metrics.putAll(emptyLegStats.toDashboardRows(zoneOn));
+            double sigmaE = config.getTripDistanceEmptySigma();
+            double muE = Math.log(config.getTripDistanceEmptyMeanKm()) - 0.5 * sigmaE * sigmaE;
+            // x1000: the dashboard prints two decimals and D is ~1e-3.
+            metrics.put("EMPTY_LEGS.first_draw_ks_d_permille", 1000.0 * emptyLegStats.ksFirstDraw(muE, sigmaE,
+                    ShiftSimulator.EMPTY_MIN_ROAD_KM, ShiftSimulator.EMPTY_MAX_ROAD_KM));
+        }
 
         // Reference targets
         metrics.put("REFERENCE.configured_fleet_size", (double) config.getTaxiFleetSize());

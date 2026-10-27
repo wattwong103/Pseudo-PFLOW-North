@@ -33,16 +33,16 @@ class Wp0ReviewFixesTest {
         return m;
     }
 
-    static Map<String, double[]> baselineMatching(Map<String, Double> metrics) {
-        Map<String, double[]> b = new HashMap<>();
-        metrics.forEach((k, v) -> b.put(k, new double[] {v, 5}));
+    static Map<String, TaxiValidationTiers.Target> baselineMatching(Map<String, Double> metrics) {
+        Map<String, TaxiValidationTiers.Target> b = new HashMap<>();
+        metrics.forEach((k, v) -> b.put(k, TaxiValidationTiers.Target.of(v, 5)));
         return b;
     }
 
     @Test
     void aTierBRowWithoutBaselineStillCountsInTheDenominator() {
         Map<String, Double> m = allMetrics();
-        Map<String, double[]> b = baselineMatching(m);
+        Map<String, TaxiValidationTiers.Target> b = baselineMatching(m);
         b.remove("Loaded Distance Ratio");
         String s = TaxiValidationTiers.summary(TaxiValidationTiers.build(m, b, true));
         assertTrue(s.contains("Tier B: 6/7"), s);
@@ -52,7 +52,7 @@ class Wp0ReviewFixesTest {
     @Test
     void aMissingMetricCountsAgainstItsTier() {
         Map<String, Double> m = allMetrics();
-        Map<String, double[]> b = baselineMatching(m);
+        Map<String, TaxiValidationTiers.Target> b = baselineMatching(m);
         m.remove("Avg Fare");
         String s = TaxiValidationTiers.summary(TaxiValidationTiers.build(m, b, true));
         assertTrue(s.contains("Tier B: 6/7"), s);
@@ -61,7 +61,7 @@ class Wp0ReviewFixesTest {
     @Test
     void summaryStatesWhetherTheZoneWasOn() {
         Map<String, Double> m = allMetrics();
-        Map<String, double[]> b = baselineMatching(m);
+        Map<String, TaxiValidationTiers.Target> b = baselineMatching(m);
         assertTrue(TaxiValidationTiers.summary(TaxiValidationTiers.build(m, b, true))
             .contains("Tier A: 10/10 hold; Tier B: 7/7 within THTA tolerance; operating zone on"));
         m.remove(TaxiValidationTiers.ZONE_PICKUPS);

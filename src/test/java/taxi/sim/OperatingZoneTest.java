@@ -54,8 +54,8 @@ class OperatingZoneTest {
 
     @Test
     void hanedaZoneCentroidIsInside() {
-        // Z07 Haneda Airport centre in config/taxi/tokyo/zones.csv
-        assertTrue(validator.isInOperatingZone(139.7798, 35.5494));
+        // Z07 Haneda Airport centre in config/taxi/tokyo/zones.csv (OSM aerodrome R17864987 since TASK-5)
+        assertTrue(validator.isInOperatingZone(139.7761, 35.5457));
     }
 
     @Test

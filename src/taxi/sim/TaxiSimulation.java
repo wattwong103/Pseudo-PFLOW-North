@@ -207,6 +207,7 @@ public class TaxiSimulation {
                 config.getBoundsMinLat(), config.getBoundsMaxLat()
             };
             geoValidator.loadAll(config.getPrefectureCodes(), configBounds);
+            geoValidator.loadOperatingZone(new java.util.LinkedHashSet<>(config.getOperatingZoneAdmCodes()));
         } else {
             System.out.println("[SPATIAL] Spatial validation DISABLED");
             geoValidator = null;

@@ -44,7 +44,7 @@ def test_counts_keep_calendar_days_distinct_from_shifts(tmp_path):
 
 
 def test_golden_result_pins_every_output(tmp_path):
-    """Two taxis over two days; no two outputs share a value, so a swap or a dropped key fails."""
+    """Three taxis over two days; no two counts or totals share a value, so a swap fails."""
     path = write_csv(tmp_path, [
         row(),
         row(id="2", passenger_in="false", purpose="0", distance_km="6.00", fare_yen="0",
@@ -55,26 +55,33 @@ def test_golden_result_pins_every_output(tmp_path):
             fare_yen="0", is_night_trip="false", starttime="37800", starttime_h="10:30:00"),
         row(id="5", taxi_id="20", distance_km="1.25", fare_yen="600.00",
             starttime="7200", starttime_h="02:00:00", simulation_day="1"),
+        row(id="6", taxi_id="30", distance_km="0.75", fare_yen="500.00",
+            is_night_trip="false", starttime="43200", starttime_h="12:00:00"),
     ])
-    result = MODULE.audit(path)
-    limitations = result.pop("limitations")
-    assert result == {
+    assert MODULE.audit(path) == {
         "schema": "taxi-trip-evidence-v1", "input": str(path.resolve()),
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "rows": 5, "occupied_trips": 3, "empty_trips": 2,
-        "observed_taxis": 2, "observed_taxi_calendar_days": 4,
-        "rows_by_simulation_day": {0: 3, 1: 2},
-        "occupied_distance_km": 7.75, "empty_distance_km": 7.5,
-        "loaded_distance_fraction": 7.75 / 15.25,
-        "mean_occupied_distance_km": 7.75 / 3,
-        "exported_fare_yen": 3600.0,
+        "rows": 6, "occupied_trips": 4, "empty_trips": 2,
+        "observed_taxis": 3, "observed_taxi_calendar_days": 5,
+        "rows_by_simulation_day": {0: 4, 1: 2},
+        "occupied_distance_km": 8.5, "empty_distance_km": 7.5,
+        "loaded_distance_fraction": 8.5 / 16.0,
+        "mean_occupied_distance_km": 8.5 / 4,
+        "exported_fare_yen": 4100.0,
+        "limitations": [
+            "Observed taxis exclude vehicles with no exported rows.",
+            "Calendar days can split a single overnight shift; these are not vehicle-days worked.",
+            "Distance is exported modeled distance; fare tax basis is not established by this file.",
+            "Coordinate ranges alone do not establish land, road or city-boundary validity.",
+            "Inspection does not establish source revision, input identity or calibration agreement.",
+        ],
     }
-    assert limitations and all(isinstance(text, str) for text in limitations)
 
 
-def test_total_overflow_rejected(tmp_path):
+@pytest.mark.parametrize("column", ["distance_km", "fare_yen"])
+def test_total_overflow_rejected(tmp_path, column):
     huge = "1" + "0" * 308 + ".00"  # finite in each row; two of them overflow the total
-    path = write_csv(tmp_path, [row(distance_km=huge), row(id="2", distance_km=huge)])
+    path = write_csv(tmp_path, [row(**{column: huge}), row(id="2", **{column: huge})])
     with pytest.raises(ValueError, match="overflow"):
         MODULE.audit(path)
 

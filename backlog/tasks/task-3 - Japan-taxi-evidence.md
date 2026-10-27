@@ -29,8 +29,10 @@ scores. Source data and research artifacts remain in the parent workspace.
 - [x] #5 Run the audit on existing Tokyo and Osaka exports, record checksums and
   limitations, and obtain independent cross-harness review before the PR.
   (The checksums were first recorded on 2026-10-28, under Verification.)
-- [x] #6 The tests pin every reported output: deleting or swapping any one
-  output or check makes a test fail (review of 2026-10-28).
+- [x] #6 The tests pin every reported count, total, ratio and limitation, and
+  every validation check. Each of the 18 one-line mutants from the 2026-10-28
+  reviews fails a test. Not pinned: the six-decimal rounding of the three
+  totals, because the golden totals are exact.
 
 ## Plan
 
@@ -116,4 +118,15 @@ The repository compile and Maven blockers above were not re-checked.
 
 Review fix (`7f643af`): the 2026-10-28 review found that 12 of 15 one-line
 mutants of the auditor passed all 29 tests. The new tests catch all 15, and
-`pytest` gives 36 passed. A Codex review of the fix commits is pending.
+`pytest` gives 36 passed.
+
+Codex review of `7f643af` and `085e2db`: REQUEST_CHANGES.
+- MEDIUM: the golden fixture had `empty_trips` equal to `observed_taxis`, so
+  swapping them went unnoticed, and the limitations list was not asserted.
+- LOW: the overflow check was tested on distance only.
+
+Fixed in the next commit: a third taxi makes every count distinct, the
+limitations list is asserted exactly, and the overflow test covers fare too.
+`pytest` gives 37 passed, and 18 of 19 mutants fail a test. The one that
+passes removes the rounding of the empty-km total. It is parked (LOW), and
+AC #6 is narrowed to match.

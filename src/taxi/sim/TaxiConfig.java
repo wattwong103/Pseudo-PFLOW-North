@@ -367,6 +367,11 @@ public class TaxiConfig {
      * Empty = no exclusion layer: behaviour is unchanged for that city.
      */
     private String exclusionAreasPath = "";
+    /**
+     * Distance decay (road km) in the cruise-target draw (cruise.distance.decay.km; TASK-8):
+     * each zone's score is multiplied by exp(-d/lambda). 0 or less = off.
+     */
+    private double cruiseDistanceDecayKm = 0.0;
 
     // ═══ Transport Network Index ═══
     /** Whether station/airport proximity enrichment is enabled. */
@@ -778,6 +783,17 @@ public class TaxiConfig {
             DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS);
         homeMaxAttempts = getInt(props, "home.max.attempts", DEFAULT_HOME_MAX_ATTEMPTS);
         exclusionAreasPath = PathResolver.resolve(props.getProperty("spatial.exclusion.areas.path", "").trim());
+        String decay = props.getProperty("cruise.distance.decay.km", "").trim();
+        cruiseDistanceDecayKm = 0.0;
+        if (!decay.isEmpty()) {
+            try {
+                cruiseDistanceDecayKm = Double.parseDouble(decay);
+            } catch (NumberFormatException e) {
+                System.err.println("  WARNING: cruise.distance.decay.km='" + decay + "' is not a number; decay OFF");
+            }
+        }
+        System.out.println("  Cruise distance decay: "
+            + (cruiseDistanceDecayKm > 0 ? cruiseDistanceDecayKm + " km (road)" : "OFF"));
         System.out.println("  Spatial validation: " + (spatialValidationEnabled ? "ENABLED" : "DISABLED"));
         if (spatialValidationEnabled) {
             System.out.println("  Shapefile dir: " + shapefileDir);
@@ -1086,6 +1102,7 @@ public class TaxiConfig {
     /** Operating-zone adm_codes; empty list = operating zone disabled. */
     public List<String> getOperatingZoneAdmCodes() { return operatingZoneAdmCodes; }
     public String getExclusionAreasPath() { return exclusionAreasPath; }
+    public double getCruiseDistanceDecayKm() { return cruiseDistanceDecayKm; }
     public int getOperatingZoneMaxAttempts() { return operatingZoneMaxAttempts; }
     public int getHomeMaxAttempts() { return homeMaxAttempts; }
 

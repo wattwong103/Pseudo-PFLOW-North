@@ -611,20 +611,39 @@ class ShiftSimulator {
         return (long)(waitMinutes * 60.0);
     }
 
-    /** Classify a hub zone by name and look up the configured Exp mean (minutes). */
+    /** Look up the configured Exp mean (minutes) for a hub zone's stand. */
     private double standMeanMinutesFor(DestinationZone zone) {
         if (zone == null) return 0;
-        String name = zone.getName() == null ? "" : zone.getName();
+        return standMeanMinutes(zone.getStandClass(), zone.getName(),
+            config.getTaxiStandWaitAirportMeanMinutes(),
+            config.getTaxiStandWaitStationMeanMinutes(),
+            config.getTaxiStandWaitEntertainmentMeanMinutes());
+    }
+
+    /**
+     * Stand wait for a hub: its explicit stand class when zones.csv gives one (TASK-7), otherwise
+     * the legacy name rule (so files without the column keep their behaviour).
+     */
+    static double standMeanMinutes(String standClass, String zoneName,
+                                   double airport, double station, double other) {
+        if (standClass != null) {
+            switch (standClass) {
+                case "airport": return airport;
+                case "station": return station;
+                default: return other;
+            }
+        }
+        String name = zoneName == null ? "" : zoneName;
         // Airport: name contains "Airport" or "空港"
         if (name.contains("Airport") || name.contains("airport") || name.contains("空港")) {
-            return config.getTaxiStandWaitAirportMeanMinutes();
+            return airport;
         }
         // Major station: name contains "Station" or "駅"
         if (name.contains("Station") || name.contains("station") || name.contains("駅")) {
-            return config.getTaxiStandWaitStationMeanMinutes();
+            return station;
         }
         // Else: entertainment / other (Roppongi etc.)
-        return config.getTaxiStandWaitEntertainmentMeanMinutes();
+        return other;
     }
 
     /** Construct + record an empty trip and update its taxi's assigned list. */

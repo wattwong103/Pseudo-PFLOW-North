@@ -362,6 +362,11 @@ public class TaxiConfig {
     private List<String> operatingZoneAdmCodes = Collections.emptyList();
     private int operatingZoneMaxAttempts = DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS;
     private int homeMaxAttempts = DEFAULT_HOME_MAX_ATTEMPTS;
+    /**
+     * Shapefile of non-road exclusion areas (spatial.exclusion.areas.path; TASK-7).
+     * Empty = no exclusion layer: behaviour is unchanged for that city.
+     */
+    private String exclusionAreasPath = "";
 
     // ═══ Transport Network Index ═══
     /** Whether station/airport proximity enrichment is enabled. */
@@ -772,6 +777,7 @@ public class TaxiConfig {
         operatingZoneMaxAttempts = getInt(props, "operating.zone.pickup.max.attempts",
             DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS);
         homeMaxAttempts = getInt(props, "home.max.attempts", DEFAULT_HOME_MAX_ATTEMPTS);
+        exclusionAreasPath = PathResolver.resolve(props.getProperty("spatial.exclusion.areas.path", "").trim());
         System.out.println("  Spatial validation: " + (spatialValidationEnabled ? "ENABLED" : "DISABLED"));
         if (spatialValidationEnabled) {
             System.out.println("  Shapefile dir: " + shapefileDir);
@@ -1079,6 +1085,7 @@ public class TaxiConfig {
     public String getPrefectureCodes() { return prefectureCodes; }
     /** Operating-zone adm_codes; empty list = operating zone disabled. */
     public List<String> getOperatingZoneAdmCodes() { return operatingZoneAdmCodes; }
+    public String getExclusionAreasPath() { return exclusionAreasPath; }
     public int getOperatingZoneMaxAttempts() { return operatingZoneMaxAttempts; }
     public int getHomeMaxAttempts() { return homeMaxAttempts; }
 

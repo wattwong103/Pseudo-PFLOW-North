@@ -407,7 +407,7 @@ class ShiftSimulator {
         // Same draw order as before WP0 (distance, target, bearing), so a run
         // without an operating zone keeps its random stream.
         final double roadKm = drawEmptyRoadKm();
-        final DestinationZone target = pickAttractiveZone(currentTime);
+        final DestinationZone target = pickAttractiveZone(currentTime, curLon, curLat);
         final double[] first = moveToward(target, curLon, curLat, roadKm);
 
         TaxiGeoValidator gv = host.getGeoValidator();
@@ -534,7 +534,7 @@ class ShiftSimulator {
      * Pick a destination zone weighted by attractiveness (without distance match).
      * Returns null if no zones or all scores are zero.
      */
-    private DestinationZone pickAttractiveZone(long currentTime) {
+    private DestinationZone pickAttractiveZone(long currentTime, double curLon, double curLat) {
         List<DestinationZone> zones = host.getDestinationZonesList();
         if (zones == null || zones.isEmpty()) return null;
         int timePeriod = host.getTimePeriod(currentTime);
@@ -547,12 +547,29 @@ class ShiftSimulator {
                 config.getAttractivenessBeta3(),
                 config.getAttractivenessBeta4());
         }
-        double[] scores = eligibleScores(zones, raw);
+        double[] scores = eligibleScores(zones,
+            distanceDecayed(zones, raw, curLon, curLat, config.getCruiseDistanceDecayKm()));
         double totalScore = 0.0;
         for (double s : scores) totalScore += s;
         if (totalScore <= 0) return null;
 
         return rouletteZone(zones, scores, random.nextDouble() * totalScore);
+    }
+
+    /**
+     * Scores multiplied by exp(-d/lambda), d = road km (TaxiTrip.distanceKm) from (lon, lat) to each
+     * zone's anchor (TASK-8). lambda <= 0 returns the scores unchanged, so the draw and its random
+     * stream are exactly as before.
+     */
+    static double[] distanceDecayed(List<DestinationZone> zones, double[] raw,
+                                    double lon, double lat, double lambdaKm) {
+        if (!(lambdaKm > 0)) return raw;
+        double[] out = new double[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            DestinationZone z = zones.get(i);
+            out[i] = raw[i] * Math.exp(-TaxiTrip.distanceKm(lon, lat, z.getAnchorLon(), z.getAnchorLat()) / lambdaKm);
+        }
+        return out;
     }
 
     /** Attractiveness scores with ineligible zones (outside the operating zone) set to 0. */

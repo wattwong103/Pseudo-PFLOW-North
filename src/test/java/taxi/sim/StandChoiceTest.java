@@ -67,6 +67,30 @@ class StandChoiceTest {
         assertThrows(IllegalStateException.class, () -> TaxiSimulation.loadHubRidership(dir.resolve("none.csv").toString()));
         Path empty = Files.createFile(dir.resolve("empty.csv"));
         assertThrows(IllegalStateException.class, () -> TaxiSimulation.loadHubRidership(empty.toString()));
+        Path blankRows = dir.resolve("blank.csv");
+        Files.write(blankRows, "zone_id,riders,stations\n\n \n".getBytes(StandardCharsets.UTF_8));
+        assertThrows(IllegalStateException.class, () -> TaxiSimulation.loadHubRidership(blankRows.toString()));
+        Path infinite = dir.resolve("inf.csv");
+        Files.write(infinite, "zone_id,riders,stations\nZ03,Infinity,6\n".getBytes(StandardCharsets.UTF_8));
+        assertThrows(IllegalStateException.class, () -> TaxiSimulation.loadHubRidership(infinite.toString()));
+        Path headerless = dir.resolve("headerless.csv");
+        Files.write(headerless, "Z03,3179159.0,6\nZ07,145598.0,3\n".getBytes(StandardCharsets.UTF_8));
+        assertThrows(IllegalStateException.class, () -> TaxiSimulation.loadHubRidership(headerless.toString()));
+        Path duplicate = dir.resolve("dup.csv");
+        Files.write(duplicate, "zone_id,riders,stations\nZ03,1.0,1\nZ03,2.0,1\n".getBytes(StandardCharsets.UTF_8));
+        assertThrows(IllegalStateException.class, () -> TaxiSimulation.loadHubRidership(duplicate.toString()));
+    }
+
+    @Test
+    void huffReturnsNullWhenNoHubQualifiesAndTheLastHubAtTheTopOfTheRange() {
+        DestinationZone a = hub("A", 1.0), b = hub("B", 2.0);
+        Map<String, Double> riders = Map.of("A", 100.0, "B", 400.0);
+        assertEquals(null, TaxiSimulation.huffPick(List.of(), riders, LON, LAT, 0.5));
+        assertEquals(null, TaxiSimulation.huffPick(List.of(a, b), Map.of(), LON, LAT, 0.5));
+        assertEquals("B", TaxiSimulation.huffPick(List.of(a, b), riders, LON, LAT, Math.nextDown(1.0)).getZoneId());
+        DestinationZone plain = new DestinationZone("P", "mixed", "P", LON, LAT, 1.0, 0.5, 0.5, 0.5, 0.5, false);
+        assertEquals(null, TaxiSimulation.huffPick(List.of(plain), Map.of("P", 1e9), LON, LAT, 0.5));
+        assertEquals("A", TaxiSimulation.huffPick(List.of(plain, a), Map.of("P", 1e9, "A", 1.0), LON, LAT, 0.0).getZoneId());
     }
 
     @Test
@@ -81,6 +105,8 @@ class StandChoiceTest {
             assertTrue(config.loadFromFile(file.toString()));
             assertEquals("huff", config.getStandChoice());
             assertEquals("/x.csv", config.getStandRidershipPath());
+            Files.write(file, "city.name=Tokyo\nstand.choice=Huff\n".getBytes(StandardCharsets.UTF_8));
+            assertThrows(IllegalArgumentException.class, () -> config.loadFromFile(file.toString()));
         } finally {
             Files.write(file, "city.name=Tokyo\n".getBytes(StandardCharsets.UTF_8));
             config.loadFromFile(file.toString());

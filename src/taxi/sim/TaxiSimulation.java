@@ -1075,25 +1075,45 @@ public class TaxiSimulation {
         return last;
     }
 
-    /** zone_id -> riders from the hub ridership CSV (zone_id,riders,stations); a missing file stops the run. */
+    /**
+     * zone_id -> riders from the hub ridership CSV (header zone_id,riders,stations). A missing file,
+     * a missing header, a malformed or duplicate row, riders that are not finite and positive, or
+     * no data rows stop the run.
+     */
     static Map<String, Double> loadHubRidership(String path) {
+        String builder = " (build it with 20_taxi/analysis/stand_ridership/stand_ridership.py)";
         if (path == null || path.isBlank() || !new File(path).isFile()) {
-            throw new IllegalStateException("Hub ridership table not found: " + path
-                + " (build it with 20_taxi/analysis/stand_ridership/stand_ridership.py)");
+            throw new IllegalStateException("Hub ridership table not found: " + path + builder);
+        }
+        List<String> lines;
+        try {
+            lines = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path),
+                java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot read hub ridership table " + path, e);
+        }
+        if (lines.isEmpty() || !lines.get(0).trim().startsWith("zone_id,")) {
+            throw new IllegalStateException("Hub ridership table " + path + " lacks the zone_id,riders header" + builder);
         }
         Map<String, Double> out = new LinkedHashMap<>();
-        try {
-            List<String> lines = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path),
-                java.nio.charset.StandardCharsets.UTF_8);
-            if (lines.size() < 2) {
-                throw new IllegalStateException("Hub ridership table " + path + " has no data rows");
+        for (String line : lines.subList(1, lines.size())) {
+            if (line.isBlank()) continue;
+            String[] p = line.trim().split(",");
+            double riders;
+            try {
+                riders = p.length >= 2 ? Double.parseDouble(p[1].trim()) : Double.NaN;
+            } catch (NumberFormatException e) {
+                riders = Double.NaN;
             }
-            for (String line : lines.subList(1, lines.size())) {
-                String[] p = line.trim().split(",");
-                if (p.length >= 2) out.put(p[0].trim(), Double.parseDouble(p[1].trim()));
+            if (!Double.isFinite(riders) || riders <= 0) {
+                throw new IllegalStateException("Hub ridership table " + path + ": bad row '" + line + "'");
             }
-        } catch (IOException | NumberFormatException e) {
-            throw new IllegalStateException("Cannot read hub ridership table " + path, e);
+            if (out.put(p[0].trim(), riders) != null) {
+                throw new IllegalStateException("Hub ridership table " + path + ": duplicate zone " + p[0].trim());
+            }
+        }
+        if (out.isEmpty()) {
+            throw new IllegalStateException("Hub ridership table " + path + " has no data rows" + builder);
         }
         return out;
     }

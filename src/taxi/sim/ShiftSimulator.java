@@ -557,17 +557,26 @@ class ShiftSimulator {
     }
 
     /**
-     * Scores multiplied by exp(-d/lambda), d = road km (TaxiTrip.distanceKm) from (lon, lat) to each
+     * Scores multiplied by exp(-(d - dmin)/lambda) (proportional to exp(-d/lambda); dmin keeps small
+     * lambdas from underflowing), d = road km (TaxiTrip.distanceKm) from (lon, lat) to each
      * zone's anchor (TASK-8). lambda <= 0 returns the scores unchanged, so the draw and its random
      * stream are exactly as before.
      */
     static double[] distanceDecayed(List<DestinationZone> zones, double[] raw,
                                     double lon, double lat, double lambdaKm) {
         if (!(lambdaKm > 0)) return raw;
-        double[] out = new double[raw.length];
+        double[] km = new double[raw.length];
+        double nearest = Double.MAX_VALUE;
         for (int i = 0; i < raw.length; i++) {
             DestinationZone z = zones.get(i);
-            out[i] = raw[i] * Math.exp(-TaxiTrip.distanceKm(lon, lat, z.getAnchorLon(), z.getAnchorLat()) / lambdaKm);
+            km[i] = TaxiTrip.distanceKm(lon, lat, z.getAnchorLon(), z.getAnchorLat());
+            nearest = Math.min(nearest, km[i]);
+        }
+        // Measured from the nearest anchor: a common factor exp(nearest/lambda) that leaves the
+        // draw's probabilities unchanged but keeps a small lambda from underflowing every score to 0.
+        double[] out = new double[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            out[i] = raw[i] * Math.exp(-(km[i] - nearest) / lambdaKm);
         }
         return out;
     }

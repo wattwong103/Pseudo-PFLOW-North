@@ -47,17 +47,32 @@ class CruiseDecayTest {
     }
 
     @Test
+    void aTinyLambdaDoesNotUnderflowEveryScoreToZero() {
+        // exp(-d/0.001) underflows to 0 for d of 1-5 km; the nearest zone must still keep a positive score
+        double[] s = ShiftSimulator.distanceDecayed(ZONES, new double[] {2.0, 2.0}, LON, LAT, 0.001);
+        assertTrue(s[0] > 0, "nearest zone score underflowed");
+        assertTrue(s[0] > s[1]);
+    }
+
+    @Test
     void theKeyDefaultsToOffAndReadsItsValue() throws Exception {
         Path file = dir.resolve("taxi_config.properties");
         TaxiConfig config = TaxiConfig.getInstance();
-        Files.write(file, "city.name=Tokyo\n".getBytes(StandardCharsets.UTF_8));
-        assertTrue(config.loadFromFile(file.toString()));
-        assertEquals(0.0, config.getCruiseDistanceDecayKm());
-        Files.write(file, "city.name=Tokyo\ncruise.distance.decay.km=5.1\n".getBytes(StandardCharsets.UTF_8));
-        assertTrue(config.loadFromFile(file.toString()));
-        assertEquals(5.1, config.getCruiseDistanceDecayKm());
-        // leave the shared singleton with the decay off for the tests that follow
-        Files.write(file, "city.name=Tokyo\n".getBytes(StandardCharsets.UTF_8));
-        assertTrue(config.loadFromFile(file.toString()));
+        try {
+            Files.write(file, "city.name=Tokyo\n".getBytes(StandardCharsets.UTF_8));
+            assertTrue(config.loadFromFile(file.toString()));
+            assertEquals(0.0, config.getCruiseDistanceDecayKm());
+            Files.write(file, "city.name=Tokyo\ncruise.distance.decay.km=5.1\n".getBytes(StandardCharsets.UTF_8));
+            assertTrue(config.loadFromFile(file.toString()));
+            assertEquals(5.1, config.getCruiseDistanceDecayKm());
+            // a malformed value leaves the decay off (and is reported on stderr), never half-on
+            Files.write(file, "city.name=Tokyo\ncruise.distance.decay.km=5,1\n".getBytes(StandardCharsets.UTF_8));
+            assertTrue(config.loadFromFile(file.toString()));
+            assertEquals(0.0, config.getCruiseDistanceDecayKm());
+        } finally {
+            // leave the shared singleton with the decay off for the tests that follow
+            Files.write(file, "city.name=Tokyo\n".getBytes(StandardCharsets.UTF_8));
+            config.loadFromFile(file.toString());
+        }
     }
 }

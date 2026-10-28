@@ -783,7 +783,17 @@ public class TaxiConfig {
             DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS);
         homeMaxAttempts = getInt(props, "home.max.attempts", DEFAULT_HOME_MAX_ATTEMPTS);
         exclusionAreasPath = PathResolver.resolve(props.getProperty("spatial.exclusion.areas.path", "").trim());
-        cruiseDistanceDecayKm = getDouble(props, "cruise.distance.decay.km", 0.0);
+        String decay = props.getProperty("cruise.distance.decay.km", "").trim();
+        cruiseDistanceDecayKm = 0.0;
+        if (!decay.isEmpty()) {
+            try {
+                cruiseDistanceDecayKm = Double.parseDouble(decay);
+            } catch (NumberFormatException e) {
+                System.err.println("  WARNING: cruise.distance.decay.km='" + decay + "' is not a number; decay OFF");
+            }
+        }
+        System.out.println("  Cruise distance decay: "
+            + (cruiseDistanceDecayKm > 0 ? cruiseDistanceDecayKm + " km (road)" : "OFF"));
         System.out.println("  Spatial validation: " + (spatialValidationEnabled ? "ENABLED" : "DISABLED"));
         if (spatialValidationEnabled) {
             System.out.println("  Shapefile dir: " + shapefileDir);

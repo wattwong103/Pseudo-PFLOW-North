@@ -214,6 +214,7 @@ public class TaxiSimulation {
             };
             geoValidator.loadAll(config.getPrefectureCodes(), configBounds);
             geoValidator.loadOperatingZone(new java.util.LinkedHashSet<>(config.getOperatingZoneAdmCodes()));
+            geoValidator.loadExclusionAreas(config.getExclusionAreasPath());
         } else {
             System.out.println("[SPATIAL] Spatial validation DISABLED");
             geoValidator = null;
@@ -597,38 +598,20 @@ public class TaxiSimulation {
                     continue; // Skip empty lines and comments
                 }
 
-                String[] parts = line.split(",");
-                if (parts.length != 11) {
-                    System.err.println("  ⚠ Warning: Skipping malformed line " + lineNum +
-                        " (expected 11 columns, got " + parts.length + ")");
-                    continue;
-                }
-
+                DestinationZone zone;
                 try {
-                    String zoneId = parts[0].trim();
-                    String zoneType = parts[1].trim();
-                    String name = parts[2].trim();
-                    double centerLon = Double.parseDouble(parts[3].trim());
-                    double centerLat = Double.parseDouble(parts[4].trim());
-                    double radius = Double.parseDouble(parts[5].trim());
-                    double jobsWeight = Double.parseDouble(parts[6].trim());
-                    double shopsWeight = Double.parseDouble(parts[7].trim());
-                    double nightlifeWeight = Double.parseDouble(parts[8].trim());
-                    double residentialWeight = Double.parseDouble(parts[9].trim());
-                    String hubValue = parts[10].trim();
-                    boolean isTransportHub = hubValue.equals("1") || hubValue.equalsIgnoreCase("true");
-
-                    DestinationZone zone = new DestinationZone(
-                        zoneId, zoneType, name, centerLon, centerLat, radius,
-                        jobsWeight, shopsWeight, nightlifeWeight, residentialWeight,
-                        isTransportHub
-                    );
-                    destinationZones.add(zone);
-
+                    zone = parseZoneLine(line);
                 } catch (NumberFormatException e) {
                     System.err.println("  ⚠ Warning: Skipping line " + lineNum +
                         " due to number format error: " + e.getMessage());
+                    continue;
                 }
+                if (zone == null) {
+                    System.err.println("  ⚠ Warning: Skipping malformed line " + lineNum +
+                        " (expected 11 or 12 columns, got " + line.split(",").length + ")");
+                    continue;
+                }
+                destinationZones.add(zone);
             }
 
             System.out.println("[CHECKPOINT] Loaded " + destinationZones.size() +
@@ -1019,6 +1002,33 @@ public class TaxiSimulation {
      * taxi enters AT_STAND mid-shift — DESIGN.md §2.3 says "Move position to
      * nearest hub-zone". Returns null if no hub zones are configured.
      */
+    /**
+     * One zones.csv data line (already trimmed). 11 columns is the original layout; an optional
+     * 12th column gives the hub's stand class (airport / station / other; empty = none), which
+     * picks its stand wait (TASK-7). Returns null for any other column count; an unknown class
+     * throws, because a mis-typed class would silently change a hub's wait.
+     */
+    static DestinationZone parseZoneLine(String line) {
+        String[] parts = line.split(",");
+        if (parts.length != 11 && parts.length != 12) return null;
+        String hubValue = parts[10].trim();
+        DestinationZone zone = new DestinationZone(
+            parts[0].trim(), parts[1].trim(), parts[2].trim(),
+            Double.parseDouble(parts[3].trim()), Double.parseDouble(parts[4].trim()),
+            Double.parseDouble(parts[5].trim()), Double.parseDouble(parts[6].trim()),
+            Double.parseDouble(parts[7].trim()), Double.parseDouble(parts[8].trim()),
+            Double.parseDouble(parts[9].trim()),
+            hubValue.equals("1") || hubValue.equalsIgnoreCase("true"));
+        if (parts.length == 12 && !parts[11].trim().isEmpty()) {
+            String standClass = parts[11].trim();
+            if (!standClass.equals("airport") && !standClass.equals("station") && !standClass.equals("other")) {
+                throw new IllegalArgumentException("Unknown stand_class '" + standClass + "' for zone " + parts[0].trim());
+            }
+            zone.setStandClass(standClass);
+        }
+        return zone;
+    }
+
     DestinationZone selectNearestHubZone(double lon, double lat) {
         return nearestZone(destinationZones, lon, lat, true);
     }

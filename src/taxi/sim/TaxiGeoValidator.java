@@ -69,12 +69,19 @@ public class TaxiGeoValidator {
     private Set<String> operatingZoneCodes = Collections.emptySet();
     private int operatingZonePolygonCount = 0;
 
+    // ── Non-road exclusion areas (large parks, gardens, cemeteries, palace grounds; optional) ──
+    // Not cached, for the same reason as the operating zone: park edges are where the gates are.
+    private STRtree exclusionIndex;
+    private boolean exclusionEnabled = false;
+    private int exclusionPolygonCount = 0;
+
     // ── Statistics ─────────────────────────────────────────────────────────
     private long totalChecks = 0;
     private long cacheHits = 0;
     private long rejectedOutOfCity = 0;
     private long rejectedWater = 0;
     private long rejectedRiver = 0;
+    private long rejectedExcluded = 0;
 
     /**
      * Creates a new TaxiGeoValidator with the specified shapefile directory.
@@ -354,6 +361,59 @@ public class TaxiGeoValidator {
 
     public boolean isOperatingZoneEnabled() { return operatingZoneEnabled; }
 
+    /**
+     * Load the non-road exclusion layer (TASK-7): polygons inside which taxis cannot pick up or set
+     * down. A blank path leaves it off; a configured path that cannot be read stops the run.
+     */
+    public void loadExclusionAreas(String path) {
+        exclusionEnabled = false;
+        exclusionPolygonCount = 0;
+        if (path == null || path.isBlank()) {
+            System.out.println("[SPATIAL] No exclusion areas configured");
+            return;
+        }
+        List<Geometry> geometries = new ArrayList<>();
+        try {
+            for (SimpleFeature feature : ShpLoader.load(path)) {
+                Geometry geom = (Geometry) feature.getDefaultGeometry();
+                if (geom != null) geometries.add(geom);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot load exclusion areas from " + path, e);
+        }
+        if (geometries.isEmpty()) {
+            throw new IllegalStateException("Exclusion layer " + path + " has no polygons");
+        }
+        loadExclusionGeometries(geometries);
+        System.out.println("[SPATIAL] Exclusion areas: " + exclusionPolygonCount + " polygons from " + path);
+    }
+
+    /** Index the given exclusion polygons (package-private so tests need no shapefile). */
+    void loadExclusionGeometries(List<Geometry> geometries) {
+        STRtree index = new STRtree();
+        PreparedGeometryFactory prepared = new PreparedGeometryFactory();
+        for (Geometry geom : geometries) {
+            index.insert(geom.getEnvelopeInternal(), prepared.create(geom));
+        }
+        index.build();
+        exclusionIndex = index;
+        exclusionPolygonCount = geometries.size();
+        exclusionEnabled = !geometries.isEmpty();
+    }
+
+    public boolean isExclusionEnabled() { return exclusionEnabled; }
+
+    /** True if the point lies in an exclusion polygon. Exact test on every call (no cache). */
+    @SuppressWarnings("unchecked")
+    public boolean isExcluded(double lon, double lat) {
+        if (!exclusionEnabled) return false;
+        Point point = geometryFactory.createPoint(new Coordinate(lon, lat));
+        for (PreparedGeometry g : (List<PreparedGeometry>) exclusionIndex.query(point.getEnvelopeInternal())) {
+            if (g.covers(point)) return true;
+        }
+        return false;
+    }
+
     /** Which check isValidLocation would fail first (for logs): "valid", "out of city", "water", "river buffer". */
     public String describeValidity(double lon, double lat) {
         if (!isWithinCity(lon, lat)) return "out of city";
@@ -579,6 +639,11 @@ public class TaxiGeoValidator {
             return false;
         }
 
+        if (isExcluded(lon, lat)) {
+            rejectedExcluded++;
+            return false;
+        }
+
         return true;
     }
 
@@ -593,6 +658,7 @@ public class TaxiGeoValidator {
         System.out.println("  Rejected (out of city): " + rejectedOutOfCity);
         System.out.println("  Rejected (water/ocean): " + rejectedWater);
         System.out.println("  Rejected (river buffer): " + rejectedRiver);
+        if (exclusionEnabled) System.out.println("  Rejected (exclusion areas): " + rejectedExcluded);
         System.out.println("  Cache size: " + landValidationCache.size() + " entries");
     }
 

@@ -228,7 +228,7 @@ class ShiftSimulator {
             // Resolve stand zone — DESIGN.md §2.3 says "Move position to nearest
             // hub-zone". If no hub zones configured, falls back to DUAL_MODE.
             DestinationZone standZone = rollStand
-                ? host.selectNearestHubZone(curLon, curLat)
+                ? host.selectStandHub(curLon, curLat, random)
                 : null;
             final boolean atStand = (standZone != null);
 

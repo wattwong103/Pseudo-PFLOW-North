@@ -372,6 +372,10 @@ public class TaxiConfig {
      * each zone's score is multiplied by exp(-d/lambda). 0 or less = off.
      */
     private double cruiseDistanceDecayKm = 0.0;
+    /** Stand-hub choice (stand.choice; TASK-9): "nearest" (default) or "huff" (ridership / road km^2). */
+    private String standChoice = "nearest";
+    /** Hub ridership table for "huff" (stand.ridership.path): zone_id,riders,stations. */
+    private String standRidershipPath = "";
 
     // ═══ Transport Network Index ═══
     /** Whether station/airport proximity enrichment is enabled. */
@@ -794,6 +798,13 @@ public class TaxiConfig {
         }
         System.out.println("  Cruise distance decay: "
             + (cruiseDistanceDecayKm > 0 ? cruiseDistanceDecayKm + " km (road)" : "OFF"));
+        standChoice = props.getProperty("stand.choice", "nearest").trim();
+        if (!standChoice.equals("nearest") && !standChoice.equals("huff")) {
+            throw new IllegalArgumentException("stand.choice must be 'nearest' or 'huff', got '" + standChoice + "'");
+        }
+        standRidershipPath = PathResolver.resolve(props.getProperty("stand.ridership.path", "").trim());
+        System.out.println("  Stand choice: " + standChoice
+            + (standChoice.equals("huff") ? " (ridership " + standRidershipPath + ")" : ""));
         System.out.println("  Spatial validation: " + (spatialValidationEnabled ? "ENABLED" : "DISABLED"));
         if (spatialValidationEnabled) {
             System.out.println("  Shapefile dir: " + shapefileDir);
@@ -1103,6 +1114,8 @@ public class TaxiConfig {
     public List<String> getOperatingZoneAdmCodes() { return operatingZoneAdmCodes; }
     public String getExclusionAreasPath() { return exclusionAreasPath; }
     public double getCruiseDistanceDecayKm() { return cruiseDistanceDecayKm; }
+    public String getStandChoice() { return standChoice; }
+    public String getStandRidershipPath() { return standRidershipPath; }
     public int getOperatingZoneMaxAttempts() { return operatingZoneMaxAttempts; }
     public int getHomeMaxAttempts() { return homeMaxAttempts; }
 

@@ -60,6 +60,8 @@ public class TaxiSimulation {
     private List<TaxiTrip> allTrips;  // V3.1: Now includes both passenger and empty trips
     private List<DestinationZone> destinationZones;
     private Random random;
+    /** Daily station ridership per hub zone (TASK-9); null unless stand.choice=huff. */
+    private Map<String, Double> hubRidership;
 
     // Spatial validation (null if disabled)
     private TaxiGeoValidator geoValidator;
@@ -236,6 +238,17 @@ public class TaxiSimulation {
 
         // WP0: restrict cruise targets and stand hubs to the operating zone
         markServiceEligibility();
+
+        // TASK-9: ridership-weighted stand choice (off unless stand.choice=huff)
+        if (config.getStandChoice().equals("huff")) {
+            hubRidership = loadHubRidership(config.getStandRidershipPath());
+            for (DestinationZone z : destinationZones) {
+                if (z.isTransportHub() && z.isServiceEligible() && !(hubRidership.getOrDefault(z.getZoneId(), 0.0) > 0)) {
+                    throw new IllegalStateException("stand.choice=huff: no ridership for eligible hub " + z.getZoneId());
+                }
+            }
+            System.out.println("[STAND] Huff stand choice over " + hubRidership.size() + " hubs (ridership / road km^2)");
+        }
     }
 
     /**
@@ -1022,6 +1035,67 @@ public class TaxiSimulation {
             zone.setStandClass(standClass);
         }
         return zone;
+    }
+
+    /**
+     * Stand hub for a taxi entering AT_STAND (TASK-9): the nearest eligible hub, or with
+     * stand.choice=huff a Huff draw over eligible hubs. Only the Huff path consumes a random
+     * number, so "nearest" keeps the random stream unchanged.
+     */
+    DestinationZone selectStandHub(double lon, double lat, Random rng) {
+        if (hubRidership == null) return selectNearestHubZone(lon, lat);
+        return huffPick(destinationZones, hubRidership, lon, lat, rng.nextDouble());
+    }
+
+    /**
+     * Huff draw (exponent 2, as Pseudo-PFLOW's commuting model): eligible hub h with probability
+     * proportional to riders_h / max(d_h, 0.1 km)^2, d = road km (TaxiTrip.distanceKm) to its anchor;
+     * u in [0, 1). Non-hubs, ineligible hubs and hubs without ridership get weight 0. Null if none.
+     */
+    static DestinationZone huffPick(List<DestinationZone> zones, Map<String, Double> riders,
+                                    double lon, double lat, double u) {
+        double[] w = new double[zones.size()];
+        double total = 0.0;
+        for (int i = 0; i < zones.size(); i++) {
+            DestinationZone z = zones.get(i);
+            if (!z.isTransportHub() || !z.isServiceEligible()) continue;
+            double km = Math.max(TaxiTrip.distanceKm(lon, lat, z.getAnchorLon(), z.getAnchorLat()), 0.1);
+            w[i] = riders.getOrDefault(z.getZoneId(), 0.0) / (km * km);
+            total += w[i];
+        }
+        if (total <= 0) return null;
+        double r = u * total, cumulative = 0.0;
+        DestinationZone last = null;
+        for (int i = 0; i < zones.size(); i++) {
+            if (w[i] <= 0) continue;
+            cumulative += w[i];
+            last = zones.get(i);
+            if (r < cumulative) return last;
+        }
+        return last;
+    }
+
+    /** zone_id -> riders from the hub ridership CSV (zone_id,riders,stations); a missing file stops the run. */
+    static Map<String, Double> loadHubRidership(String path) {
+        if (path == null || path.isBlank() || !new File(path).isFile()) {
+            throw new IllegalStateException("Hub ridership table not found: " + path
+                + " (build it with 20_taxi/analysis/stand_ridership/stand_ridership.py)");
+        }
+        Map<String, Double> out = new LinkedHashMap<>();
+        try {
+            List<String> lines = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path),
+                java.nio.charset.StandardCharsets.UTF_8);
+            if (lines.size() < 2) {
+                throw new IllegalStateException("Hub ridership table " + path + " has no data rows");
+            }
+            for (String line : lines.subList(1, lines.size())) {
+                String[] p = line.trim().split(",");
+                if (p.length >= 2) out.put(p[0].trim(), Double.parseDouble(p[1].trim()));
+            }
+        } catch (IOException | NumberFormatException e) {
+            throw new IllegalStateException("Cannot read hub ridership table " + path, e);
+        }
+        return out;
     }
 
     /**

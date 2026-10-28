@@ -998,11 +998,6 @@ public class TaxiSimulation {
     }
 
     /**
-     * Pick the NEAREST transport-hub zone to {@code (lon, lat)}. Used when a
-     * taxi enters AT_STAND mid-shift — DESIGN.md §2.3 says "Move position to
-     * nearest hub-zone". Returns null if no hub zones are configured.
-     */
-    /**
      * One zones.csv data line (already trimmed). 11 columns is the original layout; an optional
      * 12th column gives the hub's stand class (airport / station / other; empty = none), which
      * picks its stand wait (TASK-7). Returns null for any other column count; an unknown class
@@ -1029,6 +1024,11 @@ public class TaxiSimulation {
         return zone;
     }
 
+    /**
+     * Pick the NEAREST transport-hub zone to {@code (lon, lat)}. Used when a
+     * taxi enters AT_STAND mid-shift — DESIGN.md §2.3 says "Move position to
+     * nearest hub-zone". Returns null if no hub zones are configured.
+     */
     DestinationZone selectNearestHubZone(double lon, double lat) {
         return nearestZone(destinationZones, lon, lat, true);
     }

@@ -2,6 +2,7 @@ package taxi.sim;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -49,6 +50,45 @@ class ExclusionAreaTest {
         assertFalse(v.isValidLocation(PALACE[0], PALACE[1]));
         assertFalse(v.isExcluded(TOKYO_STATION[0], TOKYO_STATION[1]));
         assertEquals(stationValidBefore, v.isValidLocation(TOKYO_STATION[0], TOKYO_STATION[1]));
+    }
+
+    @Test
+    void aLayerInAMetricCrsStopsTheRunInsteadOfSilentlyMatchingNothing() {
+        TaxiGeoValidator v = new TaxiGeoValidator(SHP_DIR);
+        // JGD2011 plane-rectangular metres near the palace: lon/lat queries would never hit it
+        assertThrows(IllegalStateException.class,
+            () -> v.loadExclusionGeometries(List.of(square(-8000.0, -35000.0, 500.0))));
+    }
+
+    @Test
+    void aNonPolygonGeometryStopsTheRun() {
+        TaxiGeoValidator v = new TaxiGeoValidator(SHP_DIR);
+        assertThrows(IllegalStateException.class,
+            () -> v.loadExclusionGeometries(List.of(GF.createPoint(new Coordinate(PALACE[0], PALACE[1])))));
+    }
+
+    @Test
+    void theValidityDescriptionNamesTheExclusionLayer() {
+        TaxiGeoValidator v = new TaxiGeoValidator(SHP_DIR);
+        v.loadExclusionGeometries(List.of(square(PALACE[0], PALACE[1], 0.004)));
+        assertEquals("exclusion area", v.describeValidity(PALACE[0], PALACE[1]));
+    }
+
+    @Test
+    void aLayerOutsideTheOperatingZoneStopsTheRun() {
+        TaxiGeoValidator v = new TaxiGeoValidator(SHP_DIR);
+        v.loadOperatingZone(OperatingZoneTest.SPECIAL_WARDS_ZONE);
+        // a layer built for Osaka by mistake would never touch a Tokyo point
+        assertThrows(IllegalStateException.class,
+            () -> v.loadExclusionGeometries(List.of(square(135.50, 34.70, 0.01))));
+    }
+
+    @Test
+    void aMissingLayerFileNamesTheBuilder() {
+        TaxiGeoValidator v = new TaxiGeoValidator(SHP_DIR);
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+            () -> v.loadExclusionAreas("no/such/tokyo_exclusion_areas.shp"));
+        assertTrue(e.getMessage().contains("build_exclusion_areas.py"), e.getMessage());
     }
 
     @Test

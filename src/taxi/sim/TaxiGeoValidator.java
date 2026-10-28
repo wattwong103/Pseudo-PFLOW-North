@@ -372,6 +372,11 @@ public class TaxiGeoValidator {
             System.out.println("[SPATIAL] No exclusion areas configured");
             return;
         }
+        // data/ is not in git: a missing layer is rebuilt, not committed.
+        final String rebuild = " (build it with 20_taxi/analysis/exclusion_areas/build_exclusion_areas.py)";
+        if (!new java.io.File(path).isFile()) {
+            throw new IllegalStateException("Exclusion layer not found: " + path + rebuild);
+        }
         List<Geometry> geometries = new ArrayList<>();
         try {
             for (SimpleFeature feature : ShpLoader.load(path)) {
@@ -379,10 +384,10 @@ public class TaxiGeoValidator {
                 if (geom != null) geometries.add(geom);
             }
         } catch (Exception e) {
-            throw new IllegalStateException("Cannot load exclusion areas from " + path, e);
+            throw new IllegalStateException("Cannot load exclusion areas from " + path + rebuild, e);
         }
         if (geometries.isEmpty()) {
-            throw new IllegalStateException("Exclusion layer " + path + " has no polygons");
+            throw new IllegalStateException("Exclusion layer " + path + " has no polygons" + rebuild);
         }
         loadExclusionGeometries(geometries);
         System.out.println("[SPATIAL] Exclusion areas: " + exclusionPolygonCount + " polygons from " + path);
@@ -393,9 +398,26 @@ public class TaxiGeoValidator {
         STRtree index = new STRtree();
         PreparedGeometryFactory prepared = new PreparedGeometryFactory();
         for (Geometry geom : geometries) {
+            // A non-polygon layer, or one in a metric CRS, would load fine and then never match a
+            // lon/lat query: the exclusion would be silently off. Refuse it instead.
+            if (geom.getDimension() != 2) {
+                throw new IllegalStateException("Exclusion layer holds a non-polygon geometry: " + geom.getGeometryType());
+            }
+            Envelope e = geom.getEnvelopeInternal();
+            if (e.getMinX() < -180 || e.getMaxX() > 180 || e.getMinY() < -90 || e.getMaxY() > 90) {
+                throw new IllegalStateException("Exclusion layer is not in lon/lat degrees (envelope " + e + ")");
+            }
             index.insert(geom.getEnvelopeInternal(), prepared.create(geom));
         }
         index.build();
+        if (operatingZoneEnabled && !geometries.isEmpty()) {
+            Envelope layer = new Envelope();
+            for (Geometry geom : geometries) layer.expandToInclude(geom.getEnvelopeInternal());
+            if (!layer.intersects(operatingZoneEnvelope)) {
+                throw new IllegalStateException("Exclusion layer (envelope " + layer
+                    + ") does not touch the operating zone: wrong city or file?");
+            }
+        }
         exclusionIndex = index;
         exclusionPolygonCount = geometries.size();
         exclusionEnabled = !geometries.isEmpty();
@@ -414,11 +436,15 @@ public class TaxiGeoValidator {
         return false;
     }
 
-    /** Which check isValidLocation would fail first (for logs): "valid", "out of city", "water", "river buffer". */
+    /**
+     * Which check isValidLocation would fail first (for logs): "valid", "out of city", "water",
+     * "river buffer", "exclusion area".
+     */
     public String describeValidity(double lon, double lat) {
         if (!isWithinCity(lon, lat)) return "out of city";
         if (!isOnLand(lon, lat)) return "water";
         if (isNearRiver(lon, lat, riverBufferKm)) return "river buffer";
+        if (isExcluded(lon, lat)) return "exclusion area";
         return "valid";
     }
 

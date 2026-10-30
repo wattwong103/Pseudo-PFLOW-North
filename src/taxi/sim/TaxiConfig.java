@@ -197,6 +197,11 @@ public class TaxiConfig {
     private double taxiFareWaitingPerHour = 3085.0;
     /** Night surcharge multiplier (e.g. 1.20 = +20%). Applied during nightHours. */
     private double taxiFareNightSurcharge = 1.20;
+    /**
+     * Consumption tax included in the tariff (fare.consumption.tax.rate; TASK-11). Validation grades revenue
+     * net of it, because THTA's revenue targets exclude tax; fares themselves are unchanged. 0 = no conversion.
+     */
+    private double fareConsumptionTaxRate = 0.0;
 
     // ═══ Night Hours ═══
     /** Night period start hour (24h format). Used for fare surcharge and hotspot weighting. */
@@ -595,6 +600,24 @@ public class TaxiConfig {
         taxiFareWaitingPerHour = getDouble(props, "taxi.fare.waiting.per.hour", taxiFareWaitingPerHour);
         taxiFareNightSurcharge = getDouble(props, "taxi.fare.night.surcharge", taxiFareNightSurcharge);
         System.out.println("  Fare: ¥" + taxiFareBase + " base + ¥" + taxiFarePerKm + "/km");
+        fareConsumptionTaxRate = parseTaxRate(props.getProperty("fare.consumption.tax.rate", "0").trim());
+        System.out.println("  Consumption tax in fares: " + fareConsumptionTaxRate
+            + (fareConsumptionTaxRate > 0 ? " (validation revenue graded net of tax)" : " (no conversion)"));
+    }
+
+    /** A rate in [0, 1); anything else (negative, NaN, infinite, not a number) stops the run. */
+    static double parseTaxRate(String value) {
+        double rate;
+        try {
+            rate = Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            // Not rethrown as NumberFormatException: loadFromFile swallows that type and keeps the default.
+            throw new IllegalArgumentException("fare.consumption.tax.rate must be a number in [0, 1), got '" + value + "'");
+        }
+        if (!(rate >= 0.0 && rate < 1.0)) {
+            throw new IllegalArgumentException("fare.consumption.tax.rate must be in [0, 1), got '" + value + "'");
+        }
+        return rate;
     }
 
     private void loadNightHours(Properties props) {
@@ -975,6 +998,7 @@ public class TaxiConfig {
     public double getTaxiFarePerKm() { return taxiFarePerKm; }
     public double getTaxiFareWaitingPerHour() { return taxiFareWaitingPerHour; }
     public double getTaxiFareNightSurcharge() { return taxiFareNightSurcharge; }
+    public double getFareConsumptionTaxRate() { return fareConsumptionTaxRate; }
 
     public int getNightHoursStart() { return nightHoursStart; }
     public int getNightHoursEnd() { return nightHoursEnd; }

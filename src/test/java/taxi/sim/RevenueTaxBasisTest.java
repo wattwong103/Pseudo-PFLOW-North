@@ -31,7 +31,7 @@ class RevenueTaxBasisTest {
 
     private TaxiConfig load(String extra) throws Exception {
         Path props = dir.resolve("taxi_config.properties");
-        Files.write(props, ("city.name=Tokyo\ntaxi.fleet.size=2\n" + extra).getBytes(StandardCharsets.UTF_8));
+        Files.write(props, ("city.name=Tokyo\ntaxi.fleet.size=4\n" + extra).getBytes(StandardCharsets.UTF_8));
         TaxiConfig config = TaxiConfig.getInstance();
         assertTrue(config.loadFromFile(props.toString()));
         return config;
@@ -41,7 +41,7 @@ class RevenueTaxBasisTest {
         load("");
     }
 
-    /** Two loaded legs and one empty leg on two taxis; returns metric -> actual for the graded rows. */
+    /** Two loaded legs and one empty leg on two of four taxis, so the two revenue denominators differ. */
     private Map<String, Double> actuals(TaxiConfig config, List<TaxiTrip> trips) throws Exception {
         TaxiAgent a = new TaxiAgent(1, TaxiType.LOCAL, 139.70, LAT, 0L, 36_000L, 5.0);
         TaxiAgent b = new TaxiAgent(2, TaxiType.LOCAL, 139.70, LAT, 0L, 36_000L, 5.0);
@@ -77,7 +77,7 @@ class RevenueTaxBasisTest {
             double fares = trips.get(0).getFareYen() + trips.get(1).getFareYen();
             Map<String, Double> m = actuals(config, trips);
             assertEquals(fares / 2, m.get("Avg Fare"), 1e-9);
-            assertEquals(fares / 2, m.get("Total Daily Revenue per Taxi"), 1e-9);
+            assertEquals(fares / 4, m.get("Total Daily Revenue per Taxi"), 1e-9);
         } finally {
             reset();
         }
@@ -112,6 +112,35 @@ class RevenueTaxBasisTest {
                 assertThrows(IllegalArgumentException.class,
                     () -> load("fare.consumption.tax.rate=" + bad + "\n"), "rate '" + bad + "'");
             }
+        } finally {
+            reset();
+        }
+    }
+
+    @Test
+    void aRejectedRateDoesNotLeaveThePreviousRateBehind() throws Exception {
+        try {
+            assertEquals(0.10, load("fare.consumption.tax.rate=0.10\n").getFareConsumptionTaxRate());
+            assertThrows(IllegalArgumentException.class, () -> load("fare.consumption.tax.rate=abc\n"));
+            assertEquals(0.0, TaxiConfig.getInstance().getFareConsumptionTaxRate());
+        } finally {
+            reset();
+        }
+    }
+
+    @Test
+    void theShippedConfigsCarryTheirRate() throws Exception {
+        Path cities = BaselineBoundTest.validationDir().getParent();
+        try {
+            for (String name : Arrays.asList("taxi_config.properties", "taxi_config_1pct.properties",
+                    "taxi_config_5pct.properties", "taxi_config_tokyo_r8.properties")) {
+                TaxiConfig c = TaxiConfig.getInstance();
+                assertTrue(c.loadFromFile(cities.resolve("tokyo").resolve(name).toString()));
+                assertEquals(0.10, c.getFareConsumptionTaxRate(), 0.0, name);
+            }
+            TaxiConfig osaka = TaxiConfig.getInstance();
+            assertTrue(osaka.loadFromFile(cities.resolve("osaka").resolve("taxi_config.properties").toString()));
+            assertEquals(0.0, osaka.getFareConsumptionTaxRate(), 0.0, "osaka (basis unconfirmed)");
         } finally {
             reset();
         }

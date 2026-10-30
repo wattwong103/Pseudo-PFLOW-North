@@ -425,7 +425,8 @@ public class TaxiConfig {
      * Load configuration from properties file
      * @param configPath Path to taxi_config.properties
      * @return true if loaded successfully, false otherwise
-     * @throws IllegalArgumentException if validation.baseline.file names a missing or malformed baseline
+     * @throws IllegalArgumentException if fare.consumption.tax.rate is not a number in [0, 1), or if
+     *         validation.baseline.file names a missing or malformed baseline
      */
     public boolean loadFromFile(String configPath) {
         this.configFilePath = configPath;
@@ -461,6 +462,7 @@ public class TaxiConfig {
             loadTransportIndexConfig(props);
             loadSpatialDistributionConfig(props);
             loadZoneEnrichmentConfig(props);
+            loadRevenueBasis(props);      // may throw (invalid rate); only the validation config follows
             loadValidationConfig(props);  // last: it may throw, after every other key is loaded
 
             System.out.println("✓ Configuration loaded successfully from: " + configPath);
@@ -600,6 +602,14 @@ public class TaxiConfig {
         taxiFareWaitingPerHour = getDouble(props, "taxi.fare.waiting.per.hour", taxiFareWaitingPerHour);
         taxiFareNightSurcharge = getDouble(props, "taxi.fare.night.surcharge", taxiFareNightSurcharge);
         System.out.println("  Fare: ¥" + taxiFareBase + " base + ¥" + taxiFarePerKm + "/km");
+    }
+
+    /**
+     * The consumption-tax rate in the tariff (TASK-11). Zeroed first, so a rejected value cannot leave the previous
+     * load's rate behind; loaded just before the validation config, the only other step that may throw.
+     */
+    private void loadRevenueBasis(Properties props) {
+        fareConsumptionTaxRate = 0.0;
         fareConsumptionTaxRate = parseTaxRate(props.getProperty("fare.consumption.tax.rate", "0").trim());
         System.out.println("  Consumption tax in fares: " + fareConsumptionTaxRate
             + (fareConsumptionTaxRate > 0 ? " (validation revenue graded net of tax)" : " (no conversion)"));

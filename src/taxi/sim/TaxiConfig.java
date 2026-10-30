@@ -284,7 +284,7 @@ public class TaxiConfig {
     /** Number of MLIT-permitted PRHS operating windows in current scenario. */
     private int prhsWindowCount = 0;
     /**
-     * PRHS windows as raw spec strings, e.g. {@code "07:00-10:00,Mon-Fri"}.
+     * PRHS windows as raw spec strings, e.g. {@code "07:00-11:00,Mon-Fri"}.
      * Parsed by ShiftSimulator at runtime via {@code PrhsWindow.parse(spec)}.
      * FY2024 default: 4 windows; R8 contraction: 1 window.
      */
@@ -1028,7 +1028,7 @@ public class TaxiConfig {
     // ═══ v7.0 PRHS regulatory window getters ═══
     /** Number of MLIT-permitted PRHS operating windows in current scenario. */
     public int getPrhsWindowCount() { return prhsWindowCount; }
-    /** Raw PRHS window spec strings (e.g. "07:00-10:00,Mon-Fri"). Parsed at runtime. */
+    /** Raw PRHS window spec strings (e.g. "07:00-11:00,Mon-Fri"). Parsed at runtime. */
     public java.util.List<String> getPrhsWindowSpecs() { return java.util.Collections.unmodifiableList(prhsWindowSpecs); }
     /** Day of week the simulation represents (Mon/Tue/.../Sun). For PRHS window filtering. */
     public String getSimDayOfWeek() { return simDayOfWeek; }

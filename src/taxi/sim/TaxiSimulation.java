@@ -1526,6 +1526,8 @@ public class TaxiSimulation {
                 passengerTrips, emptyTrips,
                 passengerDist, emptyDist,
                 totalRevenue, nightTrips, avgFare, avgDist);
+        metrics.putAll(TaxiValidationEngine.revenueTaxBasisMetrics(totalRevenue, passengerTrips,
+                config.getTaxiFleetSize(), config.getFareConsumptionTaxRate()));
 
         // Per-taxi-type breakdown (LOCAL / CITYWIDE / HUB) — single pass
         Map<Integer, TaxiType> taxiTypeMap = new HashMap<>();

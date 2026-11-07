@@ -342,6 +342,20 @@ public class TaxiValidationEngine {
     }
 
     /**
+     * Dashboard rows that state the revenue basis (TASK-11): the consumption-tax rate and the revenue per taxi
+     * and per passenger leg net of it, beside the existing tax-inclusive REVENUE rows.
+     */
+    static Map<String, Double> revenueTaxBasisMetrics(double totalRevenue, long passengerTrips, int fleetSize,
+                                                      double taxRate) {
+        double net = totalRevenue / (1.0 + taxRate);
+        Map<String, Double> m = new LinkedHashMap<>();
+        m.put("REVENUE.consumption_tax_rate", taxRate);
+        m.put("REVENUE.per_taxi_yen_excl_tax", fleetSize > 0 ? net / fleetSize : 0.0);
+        m.put("REVENUE.avg_fare_yen_excl_tax", passengerTrips > 0 ? net / passengerTrips : 0.0);
+        return m;
+    }
+
+    /**
      * Compute all validation metrics from simulation output.
      */
     private Map<String, Double> computeMetrics(List<TaxiAgent> taxis, List<TaxiTrip> trips, TaxiConfig config,
@@ -399,10 +413,11 @@ public class TaxiValidationEngine {
         m.put("Empty Running Ratio (distance)", totalDistance > 0 ? 100.0 * emptyDistance / totalDistance : 0.0);
         m.put("Empty Trip Count Ratio", totalTrips > 0 ? 100.0 * emptyTrips / totalTrips : 0.0);
 
-        // Revenue metrics
-        double avgFare = passengerTrips > 0 ? totalRevenue / passengerTrips : 0.0;
+        // Revenue metrics, on the targets' basis: THTA revenue excludes consumption tax, tariff fares include it
+        double netRevenue = totalRevenue / (1.0 + config.getFareConsumptionTaxRate());
+        double avgFare = passengerTrips > 0 ? netRevenue / passengerTrips : 0.0;
         m.put("Avg Fare", avgFare);
-        m.put("Total Daily Revenue per Taxi", totalRevenue / fleetSize);
+        m.put("Total Daily Revenue per Taxi", netRevenue / fleetSize);
 
         // Temporal metrics
         m.put("Night Trip Ratio", passengerTrips > 0 ? 100.0 * nightTrips / passengerTrips : 0.0);

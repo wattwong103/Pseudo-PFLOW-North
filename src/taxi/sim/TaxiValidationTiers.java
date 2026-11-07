@@ -74,8 +74,8 @@ final class TaxiValidationTiers {
         b("Avg Passenger Trips per Taxi", "passenger legs / active vehicles (THTA)");
         b("Total Daily Distance per Taxi", "loaded + empty km / active vehicles (THTA)");
         b("Loaded Distance Ratio", "loaded km / total km x 100, jisharitsu (THTA)");
-        b("Total Daily Revenue per Taxi", "metered fares / active vehicles, yen (THTA)");
-        b("Avg Fare", "metered fare per passenger leg, yen (THTA-derived)");
+        b("Total Daily Revenue per Taxi", "metered fares net of fare.consumption.tax.rate / active vehicles, yen (THTA)");
+        b("Avg Fare", "metered fare net of fare.consumption.tax.rate per passenger leg, yen (THTA-derived)");
         b("Avg Trip Distance", "mean passenger leg, km (THTA)");
         b("Night Trip Ratio", "percent of passenger legs in the 22:00-05:00 surcharge window");
         d("Empty Trip Count Ratio", "empty legs / all exported legs x 100");

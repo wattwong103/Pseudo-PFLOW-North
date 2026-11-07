@@ -14,6 +14,7 @@ public class DestinationZone {
     private final String zoneId;
     private final String zoneType;          // V4.0: business / residential / commercial / mixed / industrial
     private final String name;
+    private String standClass;  // TASK-7: optional zones.csv column 12; null = legacy name rule
     private final double centerLon;
     private final double centerLat;
     private final double radiusKm;
@@ -235,6 +236,10 @@ public class DestinationZone {
 
     // Getters
     public String getZoneId() { return zoneId; }
+
+    /** Explicit stand class from zones.csv (airport / station / other), or null (name rule applies). */
+    public String getStandClass() { return standClass; }
+    public void setStandClass(String standClass) { this.standClass = standClass; }
     public String getZoneType() { return zoneType; }  // V4.0
     public String getName() { return name; }
     public double getCenterLon() { return centerLon; }

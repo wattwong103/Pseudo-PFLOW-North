@@ -362,6 +362,20 @@ public class TaxiConfig {
     private List<String> operatingZoneAdmCodes = Collections.emptyList();
     private int operatingZoneMaxAttempts = DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS;
     private int homeMaxAttempts = DEFAULT_HOME_MAX_ATTEMPTS;
+    /**
+     * Shapefile of non-road exclusion areas (spatial.exclusion.areas.path; TASK-7).
+     * Empty = no exclusion layer: behaviour is unchanged for that city.
+     */
+    private String exclusionAreasPath = "";
+    /**
+     * Distance decay (road km) in the cruise-target draw (cruise.distance.decay.km; TASK-8):
+     * each zone's score is multiplied by exp(-d/lambda). 0 or less = off.
+     */
+    private double cruiseDistanceDecayKm = 0.0;
+    /** Stand-hub choice (stand.choice; TASK-9): "nearest" (default) or "huff" (ridership / road km^2). */
+    private String standChoice = "nearest";
+    /** Hub ridership table for "huff" (stand.ridership.path): zone_id,riders,stations. */
+    private String standRidershipPath = "";
 
     // ═══ Transport Network Index ═══
     /** Whether station/airport proximity enrichment is enabled. */
@@ -772,6 +786,25 @@ public class TaxiConfig {
         operatingZoneMaxAttempts = getInt(props, "operating.zone.pickup.max.attempts",
             DEFAULT_OPERATING_ZONE_MAX_ATTEMPTS);
         homeMaxAttempts = getInt(props, "home.max.attempts", DEFAULT_HOME_MAX_ATTEMPTS);
+        exclusionAreasPath = PathResolver.resolve(props.getProperty("spatial.exclusion.areas.path", "").trim());
+        String decay = props.getProperty("cruise.distance.decay.km", "").trim();
+        cruiseDistanceDecayKm = 0.0;
+        if (!decay.isEmpty()) {
+            try {
+                cruiseDistanceDecayKm = Double.parseDouble(decay);
+            } catch (NumberFormatException e) {
+                System.err.println("  WARNING: cruise.distance.decay.km='" + decay + "' is not a number; decay OFF");
+            }
+        }
+        System.out.println("  Cruise distance decay: "
+            + (cruiseDistanceDecayKm > 0 ? cruiseDistanceDecayKm + " km (road)" : "OFF"));
+        standChoice = props.getProperty("stand.choice", "nearest").trim();
+        if (!standChoice.equals("nearest") && !standChoice.equals("huff")) {
+            throw new IllegalArgumentException("stand.choice must be 'nearest' or 'huff', got '" + standChoice + "'");
+        }
+        standRidershipPath = PathResolver.resolve(props.getProperty("stand.ridership.path", "").trim());
+        System.out.println("  Stand choice: " + standChoice
+            + (standChoice.equals("huff") ? " (ridership " + standRidershipPath + ")" : ""));
         System.out.println("  Spatial validation: " + (spatialValidationEnabled ? "ENABLED" : "DISABLED"));
         if (spatialValidationEnabled) {
             System.out.println("  Shapefile dir: " + shapefileDir);
@@ -1079,6 +1112,10 @@ public class TaxiConfig {
     public String getPrefectureCodes() { return prefectureCodes; }
     /** Operating-zone adm_codes; empty list = operating zone disabled. */
     public List<String> getOperatingZoneAdmCodes() { return operatingZoneAdmCodes; }
+    public String getExclusionAreasPath() { return exclusionAreasPath; }
+    public double getCruiseDistanceDecayKm() { return cruiseDistanceDecayKm; }
+    public String getStandChoice() { return standChoice; }
+    public String getStandRidershipPath() { return standRidershipPath; }
     public int getOperatingZoneMaxAttempts() { return operatingZoneMaxAttempts; }
     public int getHomeMaxAttempts() { return homeMaxAttempts; }
 

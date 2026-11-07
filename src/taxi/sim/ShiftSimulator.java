@@ -228,7 +228,7 @@ class ShiftSimulator {
             // Resolve stand zone — DESIGN.md §2.3 says "Move position to nearest
             // hub-zone". If no hub zones configured, falls back to DUAL_MODE.
             DestinationZone standZone = rollStand
-                ? host.selectNearestHubZone(curLon, curLat)
+                ? host.selectStandHub(curLon, curLat, random)
                 : null;
             final boolean atStand = (standZone != null);
 
@@ -407,7 +407,7 @@ class ShiftSimulator {
         // Same draw order as before WP0 (distance, target, bearing), so a run
         // without an operating zone keeps its random stream.
         final double roadKm = drawEmptyRoadKm();
-        final DestinationZone target = pickAttractiveZone(currentTime);
+        final DestinationZone target = pickAttractiveZone(currentTime, curLon, curLat);
         final double[] first = moveToward(target, curLon, curLat, roadKm);
 
         TaxiGeoValidator gv = host.getGeoValidator();
@@ -534,7 +534,7 @@ class ShiftSimulator {
      * Pick a destination zone weighted by attractiveness (without distance match).
      * Returns null if no zones or all scores are zero.
      */
-    private DestinationZone pickAttractiveZone(long currentTime) {
+    private DestinationZone pickAttractiveZone(long currentTime, double curLon, double curLat) {
         List<DestinationZone> zones = host.getDestinationZonesList();
         if (zones == null || zones.isEmpty()) return null;
         int timePeriod = host.getTimePeriod(currentTime);
@@ -547,12 +547,38 @@ class ShiftSimulator {
                 config.getAttractivenessBeta3(),
                 config.getAttractivenessBeta4());
         }
-        double[] scores = eligibleScores(zones, raw);
+        double[] scores = eligibleScores(zones,
+            distanceDecayed(zones, raw, curLon, curLat, config.getCruiseDistanceDecayKm()));
         double totalScore = 0.0;
         for (double s : scores) totalScore += s;
         if (totalScore <= 0) return null;
 
         return rouletteZone(zones, scores, random.nextDouble() * totalScore);
+    }
+
+    /**
+     * Scores multiplied by exp(-(d - dmin)/lambda) (proportional to exp(-d/lambda); dmin keeps small
+     * lambdas from underflowing), d = road km (TaxiTrip.distanceKm) from (lon, lat) to each
+     * zone's anchor (TASK-8). lambda <= 0 returns the scores unchanged, so the draw and its random
+     * stream are exactly as before.
+     */
+    static double[] distanceDecayed(List<DestinationZone> zones, double[] raw,
+                                    double lon, double lat, double lambdaKm) {
+        if (!(lambdaKm > 0)) return raw;
+        double[] km = new double[raw.length];
+        double nearest = Double.MAX_VALUE;
+        for (int i = 0; i < raw.length; i++) {
+            DestinationZone z = zones.get(i);
+            km[i] = TaxiTrip.distanceKm(lon, lat, z.getAnchorLon(), z.getAnchorLat());
+            nearest = Math.min(nearest, km[i]);
+        }
+        // Measured from the nearest anchor: a common factor exp(nearest/lambda) that leaves the
+        // draw's probabilities unchanged but keeps a small lambda from underflowing every score to 0.
+        double[] out = new double[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            out[i] = raw[i] * Math.exp(-(km[i] - nearest) / lambdaKm);
+        }
+        return out;
     }
 
     /** Attractiveness scores with ineligible zones (outside the operating zone) set to 0. */
@@ -611,20 +637,39 @@ class ShiftSimulator {
         return (long)(waitMinutes * 60.0);
     }
 
-    /** Classify a hub zone by name and look up the configured Exp mean (minutes). */
+    /** Look up the configured Exp mean (minutes) for a hub zone's stand. */
     private double standMeanMinutesFor(DestinationZone zone) {
         if (zone == null) return 0;
-        String name = zone.getName() == null ? "" : zone.getName();
+        return standMeanMinutes(zone.getStandClass(), zone.getName(),
+            config.getTaxiStandWaitAirportMeanMinutes(),
+            config.getTaxiStandWaitStationMeanMinutes(),
+            config.getTaxiStandWaitEntertainmentMeanMinutes());
+    }
+
+    /**
+     * Stand wait for a hub: its explicit stand class when zones.csv gives one (TASK-7), otherwise
+     * the legacy name rule (so files without the column keep their behaviour).
+     */
+    static double standMeanMinutes(String standClass, String zoneName,
+                                   double airport, double station, double other) {
+        if (standClass != null) {
+            switch (standClass) {
+                case "airport": return airport;
+                case "station": return station;
+                default: return other;
+            }
+        }
+        String name = zoneName == null ? "" : zoneName;
         // Airport: name contains "Airport" or "空港"
         if (name.contains("Airport") || name.contains("airport") || name.contains("空港")) {
-            return config.getTaxiStandWaitAirportMeanMinutes();
+            return airport;
         }
         // Major station: name contains "Station" or "駅"
         if (name.contains("Station") || name.contains("station") || name.contains("駅")) {
-            return config.getTaxiStandWaitStationMeanMinutes();
+            return station;
         }
         // Else: entertainment / other (Roppongi etc.)
-        return config.getTaxiStandWaitEntertainmentMeanMinutes();
+        return other;
     }
 
     /** Construct + record an empty trip and update its taxi's assigned list. */

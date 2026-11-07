@@ -60,6 +60,8 @@ public class TaxiSimulation {
     private List<TaxiTrip> allTrips;  // V3.1: Now includes both passenger and empty trips
     private List<DestinationZone> destinationZones;
     private Random random;
+    /** Daily station ridership per hub zone (TASK-9); null unless stand.choice=huff. */
+    private Map<String, Double> hubRidership;
 
     // Spatial validation (null if disabled)
     private TaxiGeoValidator geoValidator;
@@ -214,6 +216,7 @@ public class TaxiSimulation {
             };
             geoValidator.loadAll(config.getPrefectureCodes(), configBounds);
             geoValidator.loadOperatingZone(new java.util.LinkedHashSet<>(config.getOperatingZoneAdmCodes()));
+            geoValidator.loadExclusionAreas(config.getExclusionAreasPath());
         } else {
             System.out.println("[SPATIAL] Spatial validation DISABLED");
             geoValidator = null;
@@ -235,6 +238,17 @@ public class TaxiSimulation {
 
         // WP0: restrict cruise targets and stand hubs to the operating zone
         markServiceEligibility();
+
+        // TASK-9: ridership-weighted stand choice (off unless stand.choice=huff)
+        if (config.getStandChoice().equals("huff")) {
+            hubRidership = loadHubRidership(config.getStandRidershipPath());
+            for (DestinationZone z : destinationZones) {
+                if (z.isTransportHub() && z.isServiceEligible() && !(hubRidership.getOrDefault(z.getZoneId(), 0.0) > 0)) {
+                    throw new IllegalStateException("stand.choice=huff: no ridership for eligible hub " + z.getZoneId());
+                }
+            }
+            System.out.println("[STAND] Huff stand choice over " + hubRidership.size() + " hubs (ridership / road km^2)");
+        }
     }
 
     /**
@@ -597,38 +611,20 @@ public class TaxiSimulation {
                     continue; // Skip empty lines and comments
                 }
 
-                String[] parts = line.split(",");
-                if (parts.length != 11) {
-                    System.err.println("  ⚠ Warning: Skipping malformed line " + lineNum +
-                        " (expected 11 columns, got " + parts.length + ")");
-                    continue;
-                }
-
+                DestinationZone zone;
                 try {
-                    String zoneId = parts[0].trim();
-                    String zoneType = parts[1].trim();
-                    String name = parts[2].trim();
-                    double centerLon = Double.parseDouble(parts[3].trim());
-                    double centerLat = Double.parseDouble(parts[4].trim());
-                    double radius = Double.parseDouble(parts[5].trim());
-                    double jobsWeight = Double.parseDouble(parts[6].trim());
-                    double shopsWeight = Double.parseDouble(parts[7].trim());
-                    double nightlifeWeight = Double.parseDouble(parts[8].trim());
-                    double residentialWeight = Double.parseDouble(parts[9].trim());
-                    String hubValue = parts[10].trim();
-                    boolean isTransportHub = hubValue.equals("1") || hubValue.equalsIgnoreCase("true");
-
-                    DestinationZone zone = new DestinationZone(
-                        zoneId, zoneType, name, centerLon, centerLat, radius,
-                        jobsWeight, shopsWeight, nightlifeWeight, residentialWeight,
-                        isTransportHub
-                    );
-                    destinationZones.add(zone);
-
+                    zone = parseZoneLine(line);
                 } catch (NumberFormatException e) {
                     System.err.println("  ⚠ Warning: Skipping line " + lineNum +
                         " due to number format error: " + e.getMessage());
+                    continue;
                 }
+                if (zone == null) {
+                    System.err.println("  ⚠ Warning: Skipping malformed line " + lineNum +
+                        " (expected 11 or 12 columns, got " + line.split(",").length + ")");
+                    continue;
+                }
+                destinationZones.add(zone);
             }
 
             System.out.println("[CHECKPOINT] Loaded " + destinationZones.size() +
@@ -1012,6 +1008,114 @@ public class TaxiSimulation {
             config.getBoundsMinLon(), config.getBoundsMaxLon(),
             config.getBoundsMinLat(), config.getBoundsMaxLat()
         };
+    }
+
+    /**
+     * One zones.csv data line (already trimmed). 11 columns is the original layout; an optional
+     * 12th column gives the hub's stand class (airport / station / other; empty = none), which
+     * picks its stand wait (TASK-7). Returns null for any other column count; an unknown class
+     * throws, because a mis-typed class would silently change a hub's wait.
+     */
+    static DestinationZone parseZoneLine(String line) {
+        String[] parts = line.split(",");
+        if (parts.length != 11 && parts.length != 12) return null;
+        String hubValue = parts[10].trim();
+        DestinationZone zone = new DestinationZone(
+            parts[0].trim(), parts[1].trim(), parts[2].trim(),
+            Double.parseDouble(parts[3].trim()), Double.parseDouble(parts[4].trim()),
+            Double.parseDouble(parts[5].trim()), Double.parseDouble(parts[6].trim()),
+            Double.parseDouble(parts[7].trim()), Double.parseDouble(parts[8].trim()),
+            Double.parseDouble(parts[9].trim()),
+            hubValue.equals("1") || hubValue.equalsIgnoreCase("true"));
+        if (parts.length == 12 && !parts[11].trim().isEmpty()) {
+            String standClass = parts[11].trim();
+            if (!standClass.equals("airport") && !standClass.equals("station") && !standClass.equals("other")) {
+                throw new IllegalArgumentException("Unknown stand_class '" + standClass + "' for zone " + parts[0].trim());
+            }
+            zone.setStandClass(standClass);
+        }
+        return zone;
+    }
+
+    /**
+     * Stand hub for a taxi entering AT_STAND (TASK-9): the nearest eligible hub, or with
+     * stand.choice=huff a Huff draw over eligible hubs. Only the Huff path consumes a random
+     * number, so "nearest" keeps the random stream unchanged.
+     */
+    DestinationZone selectStandHub(double lon, double lat, Random rng) {
+        if (hubRidership == null) return selectNearestHubZone(lon, lat);
+        return huffPick(destinationZones, hubRidership, lon, lat, rng.nextDouble());
+    }
+
+    /**
+     * Huff draw (exponent 2, as Pseudo-PFLOW's commuting model): eligible hub h with probability
+     * proportional to riders_h / max(d_h, 0.1 km)^2, d = road km (TaxiTrip.distanceKm) to its anchor;
+     * u in [0, 1). Non-hubs, ineligible hubs and hubs without ridership get weight 0. Null if none.
+     */
+    static DestinationZone huffPick(List<DestinationZone> zones, Map<String, Double> riders,
+                                    double lon, double lat, double u) {
+        double[] w = new double[zones.size()];
+        double total = 0.0;
+        for (int i = 0; i < zones.size(); i++) {
+            DestinationZone z = zones.get(i);
+            if (!z.isTransportHub() || !z.isServiceEligible()) continue;
+            double km = Math.max(TaxiTrip.distanceKm(lon, lat, z.getAnchorLon(), z.getAnchorLat()), 0.1);
+            w[i] = riders.getOrDefault(z.getZoneId(), 0.0) / (km * km);
+            total += w[i];
+        }
+        if (total <= 0) return null;
+        double r = u * total, cumulative = 0.0;
+        DestinationZone last = null;
+        for (int i = 0; i < zones.size(); i++) {
+            if (w[i] <= 0) continue;
+            cumulative += w[i];
+            last = zones.get(i);
+            if (r < cumulative) return last;
+        }
+        return last;
+    }
+
+    /**
+     * zone_id -> riders from the hub ridership CSV (header zone_id,riders,stations). A missing file,
+     * a missing header, a malformed or duplicate row, riders that are not finite and positive, or
+     * no data rows stop the run.
+     */
+    static Map<String, Double> loadHubRidership(String path) {
+        String builder = " (build it with 20_taxi/analysis/stand_ridership/stand_ridership.py)";
+        if (path == null || path.isBlank() || !new File(path).isFile()) {
+            throw new IllegalStateException("Hub ridership table not found: " + path + builder);
+        }
+        List<String> lines;
+        try {
+            lines = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path),
+                java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot read hub ridership table " + path, e);
+        }
+        if (lines.isEmpty() || !lines.get(0).trim().startsWith("zone_id,")) {
+            throw new IllegalStateException("Hub ridership table " + path + " lacks the zone_id,riders header" + builder);
+        }
+        Map<String, Double> out = new LinkedHashMap<>();
+        for (String line : lines.subList(1, lines.size())) {
+            if (line.isBlank()) continue;
+            String[] p = line.trim().split(",");
+            double riders;
+            try {
+                riders = p.length >= 2 ? Double.parseDouble(p[1].trim()) : Double.NaN;
+            } catch (NumberFormatException e) {
+                riders = Double.NaN;
+            }
+            if (!Double.isFinite(riders) || riders <= 0) {
+                throw new IllegalStateException("Hub ridership table " + path + ": bad row '" + line + "'");
+            }
+            if (out.put(p[0].trim(), riders) != null) {
+                throw new IllegalStateException("Hub ridership table " + path + ": duplicate zone " + p[0].trim());
+            }
+        }
+        if (out.isEmpty()) {
+            throw new IllegalStateException("Hub ridership table " + path + " has no data rows" + builder);
+        }
+        return out;
     }
 
     /**

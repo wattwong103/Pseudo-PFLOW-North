@@ -441,13 +441,25 @@ public class TaxiDataExporter {
         if (zones == null || zones.isEmpty()) {
             return null;
         }
+        return containingZoneNearestCentre(zones, lon, lat);
+    }
 
+    /**
+     * Of the zones whose circle contains the point, the one with the nearest centre; null if
+     * none does. TASK-7: the first containing zone in file order let large or early zones shadow
+     * overlapping ones (labels only; trip generation never used this).
+     */
+    static DestinationZone containingZoneNearestCentre(List<DestinationZone> zones, double lon, double lat) {
+        DestinationZone best = null;
+        double bestKm = Double.MAX_VALUE;
         for (DestinationZone zone : zones) {
-            if (zone.containsPoint(lon, lat)) {
-                return zone;
+            double km = zone.getDistanceFromCenter(lon, lat);
+            if (km <= zone.getRadiusKm() && km < bestKm) {
+                best = zone;
+                bestKm = km;
             }
         }
-        return null;  // Location is outside all zones
+        return best;
     }
 
     /**

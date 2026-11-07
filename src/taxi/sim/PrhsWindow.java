@@ -16,12 +16,14 @@ import java.util.List;
  * </ul>
  *
  * <p>Spec format: {@code "HH:MM-HH:MM,DAYS"} where DAYS is a comma list of
- * day tokens or a range like {@code "Mon-Fri"}. Examples:
+ * day tokens or a range like {@code "Mon-Fri"}. MLIT writes windows as
+ * inclusive hour blocks: "7時台～10時台" is 07:00-10:59, so its spec end is
+ * the hour after the last block. Examples (Tokyo FY2024):
  * <pre>
- *   "07:00-10:00,Mon-Fri"
- *   "16:00-19:00,Fri,Sat"
- *   "00:00-04:00,Sat"
- *   "10:00-13:00,Sun"
+ *   "07:00-11:00,Mon-Fri"
+ *   "16:00-20:00,Fri,Sat"
+ *   "00:00-05:00,Sat"
+ *   "10:00-14:00,Sun"
  * </pre>
  *
  * <p>Used by {@link ShiftSimulator} to gate {@link TaxiType#RIDE_HAIL_PRHS}
@@ -61,7 +63,7 @@ final class PrhsWindow {
     }
 
     /**
-     * Parse a single window spec (e.g. {@code "07:00-10:00,Mon-Fri"}).
+     * Parse a single window spec (e.g. {@code "07:00-11:00,Mon-Fri"}).
      *
      * @throws IllegalArgumentException if the spec is malformed
      */

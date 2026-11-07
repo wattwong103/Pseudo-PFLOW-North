@@ -84,8 +84,8 @@ public enum TaxiType {
      *   <li>Default share 0.5% (matches MLIT-published 1,365 trips/day in
      *       Tokyo 特別区・武三 vs ~625K total taxi trips, ≈0.22%)
      *   <li>Shift duration 8–10 h, clipped to MLIT-permitted operating windows
-     *       (FY2024: Mon–Fri 7–10am, Fri/Sat 16–19, Sat 0–4, Sun 10–13;
-     *        R8 contraction: Mon–Fri 7–10am only)
+     *       (MLIT hour blocks, end inclusive. FY2024: Mon–Fri 7時台–10時台 = 07:00–10:59,
+     *        Fri/Sat 16–19時台, Sat 0–4時台, Sun 10–13時台; R8 contraction: Mon–Fri 7–10時台 only)
      * </ul>
      */
     RIDE_HAIL_PRHS

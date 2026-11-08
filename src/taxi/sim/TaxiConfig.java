@@ -94,13 +94,14 @@ public class TaxiConfig {
     // ═══ Phase 3 (B1): v7.0 log-normal distance distribution ═══
     // DESIGN.md §2.6 — used by shift_time engine only. Legacy engine ignores these.
     //
-    // Loaded leg: lognormal(mu = ln(4.6) - sigma^2/2, sigma = 0.6), bounded [0.5, 15] km
-    //   The -sigma^2/2 correction makes the arithmetic mean = trip.distance.average.
-    // Empty leg:  lognormal(mu = ln(5.1) - sigma^2/2, sigma = 0.7), bounded [0.3, 12] km
+    // Loaded leg: lognormal(mu, sigma = 0.6), re-drawn into [0.5, 15] km
+    // Empty leg:  lognormal(mu, sigma = 0.7), re-drawn into [0.3, 12] km
+    //   TASK-12: each mu is solved (TruncatedLognormal) so the BOUNDED mean equals the configured mean
+    //   (trip.distance.average, trip.distance.empty.mean.km); ln(m) - sigma^2/2 holds only without bounds.
     //   Empty mean is loaded by Phase 3 but only used in Phase 4+ (DUAL_MODE).
     /** Sigma of log-normal loaded-leg distance (Phase 3 / shift_time engine). */
     private double tripDistanceLoadedSigma = 0.6;
-    /** Mean of log-normal empty-leg distance (Phase 4+; loaded but unused in Phase 3). */
+    /** Mean of the bounded (re-drawn) log-normal empty-leg distance, km (TASK-12). */
     private double tripDistanceEmptyMeanKm = 5.1;
     /** Sigma of log-normal empty-leg distance (Phase 4+; loaded but unused in Phase 3). */
     private double tripDistanceEmptySigma = 0.7;
@@ -985,7 +986,7 @@ public class TaxiConfig {
     // Phase 3 (B1) — v7.0 log-normal distance distribution getters
     /** Sigma of log-normal loaded-leg distance. Used by shift_time engine. DESIGN.md §2.6. */
     public double getTripDistanceLoadedSigma() { return tripDistanceLoadedSigma; }
-    /** Mean of log-normal empty-leg distance in km. Loaded by Phase 3, used by Phase 4+. */
+    /** Mean of the bounded (re-drawn) log-normal empty-leg distance, km (TASK-12). */
     public double getTripDistanceEmptyMeanKm() { return tripDistanceEmptyMeanKm; }
     /** Sigma of log-normal empty-leg distance. Loaded by Phase 3, used by Phase 4+. */
     public double getTripDistanceEmptySigma() { return tripDistanceEmptySigma; }

@@ -102,6 +102,8 @@ public class TaxiSimulation {
     private final LoadedLegBorderStats loadedLegBorderStats = new LoadedLegBorderStats();
     /** B7: pre-computed stratified sample of taxi IDs for diagnostic emit. */
     private java.util.Set<Integer> diagnosticSampleIds;
+    /** TASK-12: loaded-leg log-normal location, solved once per run (NaN until first use). */
+    private double loadedLegMu = Double.NaN;
 
     // ==================== LEGACY HOTSPOT SYSTEM (REMOVED IN V4.0) ====================
     //
@@ -821,6 +823,8 @@ public class TaxiSimulation {
         diagnosticWriter = new DiagnosticWriter(config);
         diagnosticSampleIds = buildDiagnosticSampleSet();
 
+        // TASK-12: solve the loaded-leg location once, before any draw (fails fast on a bad config).
+        loadedLegMu = loadedLegMu(config);
         ShiftSimulator shiftSim = new ShiftSimulator(config, this, modeMixResolver,
             random, diagnosticWriter, diagnosticSampleIds);
 
@@ -1385,11 +1389,21 @@ public class TaxiSimulation {
     }
 
     /**
+     * Log-normal location of the loaded leg (TASK-12): solved so that the log-normal re-drawn into
+     * [trip.distance.min, trip.distance.max] has mean {@code trip.distance.average}.
+     */
+    static double loadedLegMu(TaxiConfig config) {
+        return TruncatedLognormal.muForBoundedMean(config.getTripDistanceAverage(),
+            config.getTripDistanceLoadedSigma(), config.getTripDistanceMin(), config.getTripDistanceMax());
+    }
+
+    /**
      * Phase 3 (B1) — Single-sample log-normal loaded-leg dropoff (DESIGN.md §2.6).
      *
-     * <p>Sample the loaded-leg distance from {@code lognormal(mu, sigma)} where
-     * {@code mu = ln(mean) - sigma^2/2} so the arithmetic mean equals
-     * {@code config.getTripDistanceAverage()} (4.6 km for FY2024). Pick a
+     * <p>Sample the loaded-leg distance from {@code lognormal(mu, sigma)}, re-drawn into
+     * [{@code trip.distance.min}, {@code trip.distance.max}], where {@code mu} is solved so that the mean of that
+     * bounded distribution equals {@code config.getTripDistanceAverage()} (4.6 km for FY2024; TASK-12, see
+     * {@link #loadedLegMu(TaxiConfig)}). Pick a
      * uniform random bearing and place the dropoff at exactly that distance
      * from the pickup. If the resulting position fails spatial validation,
      * project to the nearest valid land cell within
@@ -1404,30 +1418,23 @@ public class TaxiSimulation {
      *
      * @return {@code [lon, lat]} of the loaded-leg dropoff, or {@code null} if
      *         spatial projection failed (caller falls through to legacy path)
+     *
+     * <p>Package-private — also called by ShiftSimulator (B2 / Phase 4 state machine).
      */
-    /** Package-private — also called by ShiftSimulator (B2 / Phase 4 state machine). */
     double[] sampleLogNormalLoadedLeg(double pickupLon, double pickupLat) {
-        // Sample log-normal ROAD distance (road-km, matching THTA's reporting unit)
-        // with -sigma^2/2 correction so arithmetic mean of the unbounded sample
-        // equals config.getTripDistanceAverage() = 4.6 km.
-        //
+        // Sample log-normal ROAD distance (road-km, matching THTA's reporting unit).
         // B7.5: reject-and-redraw within [trip.distance.min, trip.distance.max]
         // instead of clamping. Eliminates the at-floor spike artifact (Trip
         // Distance Min Check observed 0.07 km below 0.5 km floor pre-fix).
         // Attempt budget 100; fall back to clamp on exhaustion (rare).
-        final double sigma = config.getTripDistanceLoadedSigma();
-        final double mu = Math.log(config.getTripDistanceAverage()) - 0.5 * sigma * sigma;
-        final double minRoad = config.getTripDistanceMin();
-        final double maxRoad = config.getTripDistanceMax();
-        double roadKm;
-        int attempts = 0;
-        do {
-            roadKm = Math.exp(mu + sigma * random.nextGaussian());
-            attempts++;
-        } while ((roadKm < minRoad || roadKm > maxRoad) && attempts < 100);
-        if (roadKm < minRoad || roadKm > maxRoad) {
-            roadKm = Math.max(minRoad, Math.min(maxRoad, roadKm));
+        // TASK-12: mu is solved so the mean of the re-drawn (bounded) sample equals
+        // config.getTripDistanceAverage() = 4.6 km; ln(m) - s^2/2 gave 4.43 km.
+        if (Double.isNaN(loadedLegMu)) {
+            loadedLegMu = loadedLegMu(config);
         }
+        final double minRoad = config.getTripDistanceMin();
+        final double roadKm = TruncatedLognormal.draw(random, loadedLegMu, config.getTripDistanceLoadedSigma(),
+            minRoad, config.getTripDistanceMax());
 
         // CRITICAL: TaxiTrip.distanceKm() stores trip distance as Haversine ×
         // Manhattan factor (1.4 for Tokyo). To produce a stored road-km of
@@ -1693,7 +1700,7 @@ public class TaxiSimulation {
         if (emptyLegStats != null) {
             metrics.putAll(emptyLegStats.toDashboardRows(zoneOn));
             double sigmaE = config.getTripDistanceEmptySigma();
-            double muE = Math.log(config.getTripDistanceEmptyMeanKm()) - 0.5 * sigmaE * sigmaE;
+            double muE = ShiftSimulator.emptyLegMu(config); // TASK-12: the sampler's bounded-mean location
             // x1000: the dashboard prints two decimals and D is ~1e-3.
             metrics.put("EMPTY_LEGS.first_draw_ks_d_permille", 1000.0 * emptyLegStats.ksFirstDraw(muE, sigmaE,
                     ShiftSimulator.EMPTY_MIN_ROAD_KM, ShiftSimulator.EMPTY_MAX_ROAD_KM));

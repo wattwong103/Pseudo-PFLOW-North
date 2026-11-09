@@ -100,7 +100,7 @@ class EmptyLegStatsTest {
 
     @Test
     void ksStatisticIsSmallForTruncatedLognormalQuantilesAndLargeForAShift() {
-        double mu = Math.log(5.1) - 0.5 * 0.7 * 0.7;
+        double mu = TruncatedLognormal.muForBoundedMean(5.1, 0.7, 0.3, 12.0); // the sampler's location (TASK-12)
         EmptyLegStats exact = new EmptyLegStats();
         EmptyLegStats shifted = new EmptyLegStats();
         int n = 2000;

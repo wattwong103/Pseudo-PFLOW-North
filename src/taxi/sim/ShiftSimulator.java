@@ -107,10 +107,9 @@ class ShiftSimulator {
         this.diagnostics = diagnostics;
         this.diagnosticSampleIds = diagnosticSampleIds;
         this.manhattanFactor = config.getManhattanFactor();
-        // Lognormal mu corrected so E[exp(N(mu,sigma^2))] = empty.mean.km.
+        // TASK-12: mu solved so the mean of the BOUNDED (re-drawn) log-normal equals empty.mean.km.
         this.emptySigma = config.getTripDistanceEmptySigma();
-        this.emptyMu = Math.log(config.getTripDistanceEmptyMeanKm())
-                       - 0.5 * emptySigma * emptySigma;
+        this.emptyMu = emptyLegMu(config);
         // B3 / Phase 6: pre-parse PRHS windows for today's day-of-week.
         this.prhsWindowsToday = parsePrhsWindowsForToday(config);
         if (config.getPrhsWindowCount() > 0) {
@@ -460,21 +459,18 @@ class ShiftSimulator {
         return new InZoneResult(fallback[0], fallback[1], maxAttempts, true);
     }
 
-    /** Log-normal road-km for one empty leg, re-drawn into [EMPTY_MIN, EMPTY_MAX] (B7.5). */
+    /**
+     * Log-normal location of the empty leg (TASK-12): solved so that the log-normal re-drawn into
+     * [EMPTY_MIN_ROAD_KM, EMPTY_MAX_ROAD_KM] has mean {@code trip.distance.empty.mean.km}.
+     */
+    static double emptyLegMu(TaxiConfig config) {
+        return TruncatedLognormal.muForBoundedMean(config.getTripDistanceEmptyMeanKm(),
+            config.getTripDistanceEmptySigma(), EMPTY_MIN_ROAD_KM, EMPTY_MAX_ROAD_KM);
+    }
+
+    /** Log-normal road-km for one empty leg, re-drawn into [EMPTY_MIN, EMPTY_MAX] (B7.5; DESIGN.md §2.6). */
     private double drawEmptyRoadKm() {
-        // Sample log-normal road-km empty distance per DESIGN.md §2.6.
-        // B7.5: reject-and-redraw within [EMPTY_MIN_ROAD_KM, EMPTY_MAX_ROAD_KM]
-        // instead of clamping; eliminates at-floor spike artifact.
-        double roadKm;
-        int attempts = 0;
-        do {
-            roadKm = Math.exp(emptyMu + emptySigma * random.nextGaussian());
-            attempts++;
-        } while ((roadKm < EMPTY_MIN_ROAD_KM || roadKm > EMPTY_MAX_ROAD_KM) && attempts < 100);
-        if (roadKm < EMPTY_MIN_ROAD_KM || roadKm > EMPTY_MAX_ROAD_KM) {
-            roadKm = Math.max(EMPTY_MIN_ROAD_KM, Math.min(EMPTY_MAX_ROAD_KM, roadKm));
-        }
-        return roadKm;
+        return TruncatedLognormal.draw(random, emptyMu, emptySigma, EMPTY_MIN_ROAD_KM, EMPTY_MAX_ROAD_KM);
     }
 
     /**

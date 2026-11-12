@@ -137,6 +137,21 @@ class NearbyEmptyLegTest {
     }
 
     @Test
+    void standAndOtherLegsKeepTheEndPointDistanceAndNearbyLegsTheirCruiseKm() {
+        // a stand leg, a fallback deadhead and a legacy leg leave the cruise km NaN
+        assertEquals(3.7, ShiftSimulator.emptyLegKm(Double.NaN, 3.7), 0.0);
+        assertEquals(5.1, ShiftSimulator.emptyLegKm(5.1, 1.2), 0.0);
+    }
+
+    @Test
+    void aVehicleThatDroppedOffOutsideTheOperatingZoneNeverCruisesNearby() {
+        assertTrue(ShiftSimulator.nearbyEligible(true, false, false));   // no zone configured
+        assertTrue(ShiftSimulator.nearbyEligible(true, true, true));
+        assertFalse(ShiftSimulator.nearbyEligible(true, true, false));   // outside: reposition as before
+        assertFalse(ShiftSimulator.nearbyEligible(false, true, true));   // feature off
+    }
+
+    @Test
     void anEmptyTripCanCarryItsCruiseDistance() {
         TaxiTrip t = TaxiTrip.createEmptyTrip(1, LON, LAT, LON + 0.01, LAT, 0);
         assertEquals(TaxiTrip.distanceKm(LON, LAT, LON + 0.01, LAT), t.getDistanceKm(), 1e-12);

@@ -265,9 +265,8 @@ class ShiftSimulator {
 
             // TASK-13: a nearby-cruise leg is driven (and recorded) over its drawn road km, not over the
             // end-point distance; every other leg keeps the end-point distance.
-            final double emptyRoadKm = Double.isNaN(cruiseKm)
-                ? host.calculateDistance(curLon, curLat, pickupLon, pickupLat)
-                : cruiseKm;
+            final double emptyRoadKm = emptyLegKm(cruiseKm,
+                host.calculateDistance(curLon, curLat, pickupLon, pickupLat));
             emptyTravelTime = TaxiTrip.estimateTravelTime(emptyRoadKm);
 
             // Emit empty-trip record for the cruise (above threshold).
@@ -430,9 +429,9 @@ class ShiftSimulator {
         // A vehicle that dropped off outside the operating zone cannot reach it within the radius, so it
         // repositions as before (otherwise its pickup attempts all fail and it deadheads to a centroid).
         final TaxiGeoValidator zoneGate = host.getGeoValidator();
-        final boolean nearbyEligible = config.isUseNearbyTrips()
-            && (zoneGate == null || !zoneGate.isOperatingZoneEnabled()
-                || zoneGate.isInOperatingZone(curLon, curLat));
+        final boolean nearbyEligible = nearbyEligible(config.isUseNearbyTrips(),
+            zoneGate != null && zoneGate.isOperatingZoneEnabled(),
+            zoneGate != null && zoneGate.isOperatingZoneEnabled() && zoneGate.isInOperatingZone(curLon, curLat));
         final boolean nearby = nearbyEligible
             && random.nextDouble() < config.getNearbyTripProbability();
         final double[] cruiseKm = {Double.NaN};
@@ -493,6 +492,16 @@ class ShiftSimulator {
         else if (lastEmptyLegPath == EmptyLegPath.PROJECTED) lastEmptyLegPath = EmptyLegPath.NEARBY_PROJECTED;
         if (lastEmptyLegPath != EmptyLegPath.STAY_PUT) cruiseKmOut[0] = roadKm;
         return p;
+    }
+
+    /** TASK-13: km of an empty leg: its drawn cruise km (a nearby cruise), else the end-point distance (NaN cruise). */
+    static double emptyLegKm(double cruiseKm, double endpointKm) {
+        return Double.isNaN(cruiseKm) ? endpointKm : cruiseKm;
+    }
+
+    /** TASK-13: a leg may cruise nearby if the feature is on and, with an operating zone, it starts inside it. */
+    static boolean nearbyEligible(boolean featureOn, boolean zoneEnabled, boolean startInZone) {
+        return featureOn && (!zoneEnabled || startInZone);
     }
 
     /** TASK-13: displacement (great-circle km) of a nearby cruise: min(roadKm / manhattan, R * sqrt(U)). */

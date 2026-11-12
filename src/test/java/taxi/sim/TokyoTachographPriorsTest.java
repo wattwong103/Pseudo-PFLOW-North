@@ -22,6 +22,14 @@ class TokyoTachographPriorsTest {
         return load("config/taxi/tokyo/taxi_config.properties");
     }
 
+    private static String readR8() {
+        try {
+            return java.nio.file.Files.readString(java.nio.file.Path.of("config/taxi/tokyo/taxi_config_tokyo_r8.properties"));
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
     private TaxiConfig load(String path) {
         TaxiConfig config = TaxiConfig.getInstance();
         assertTrue(config.loadFromFile(path));
@@ -34,6 +42,12 @@ class TokyoTachographPriorsTest {
         double[] expected = {main.getTripDistanceLoadedSigma(), main.getShiftStart1Prob(), main.getShiftStart2Prob(),
             main.getShiftStart3Prob()};
         assertFalse(main.isUseNearbyTrips());
+        // TaxiConfig is a singleton: a key missing from r8 would inherit the main value, so require each key there.
+        String r8Text = readR8();
+        for (String key : new String[] {"trip.distance.loaded.sigma=", "shift.start.1.probability=",
+            "shift.start.2.probability=", "shift.start.3.probability=", "use.nearby.trips=false"}) {
+            assertTrue(r8Text.lines().anyMatch(l -> l.startsWith(key)), "r8 config lacks " + key);
+        }
         TaxiConfig r8 = load("config/taxi/tokyo/taxi_config_tokyo_r8.properties");
         double[] actual = {r8.getTripDistanceLoadedSigma(), r8.getShiftStart1Prob(), r8.getShiftStart2Prob(),
             r8.getShiftStart3Prob()};

@@ -427,7 +427,13 @@ class ShiftSimulator {
         // pickup lies within nearby.trip.radius.km, the leg still drives (and records) its drawn road km.
         // The coin is drawn only when the feature is on, so a run with use.nearby.trips=false keeps its
         // random stream.
-        final boolean nearby = config.isUseNearbyTrips()
+        // A vehicle that dropped off outside the operating zone cannot reach it within the radius, so it
+        // repositions as before (otherwise its pickup attempts all fail and it deadheads to a centroid).
+        final TaxiGeoValidator zoneGate = host.getGeoValidator();
+        final boolean nearbyEligible = config.isUseNearbyTrips()
+            && (zoneGate == null || !zoneGate.isOperatingZoneEnabled()
+                || zoneGate.isInOperatingZone(curLon, curLat));
+        final boolean nearby = nearbyEligible
             && random.nextDouble() < config.getNearbyTripProbability();
         final double[] cruiseKm = {Double.NaN};
         final double[] first = placeEmptyLeg(target, curLon, curLat, roadKm, nearby, cruiseKm);

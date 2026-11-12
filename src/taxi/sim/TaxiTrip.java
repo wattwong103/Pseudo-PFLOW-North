@@ -294,6 +294,11 @@ public class TaxiTrip {
         return dropoffTime;
     }
 
+    /** TASK-13: overrides the end-point distance, for an empty cruise driven over its drawn road km. */
+    void setDistanceKm(double km) {
+        this.distanceKm = km;
+    }
+
     public double getDistanceKm() {
         return distanceKm;
     }

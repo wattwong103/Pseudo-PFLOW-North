@@ -47,6 +47,8 @@ final class EmptyLegStats {
     private final Map<EmptyLegPath, double[]> orphanKms = new EnumMap<>(EmptyLegPath.class);
     private final Map<EmptyLegPath, long[]> unrecordedCounts = new EnumMap<>(EmptyLegPath.class);
     private double unrecordedKm = 0.0;
+    // TASK-13: DUAL_MODE legs that drew the nearby-cruise coin (whatever path they ended on).
+    private long nearbyLegs = 0;
 
     EmptyLegStats() {
         for (EmptyLegPath p : EmptyLegPath.values()) {
@@ -81,6 +83,10 @@ final class EmptyLegStats {
         unrecordedCounts.get(path)[0]++;
         unrecordedKm += km;
     }
+
+    void recordNearbyLeg() { nearbyLegs++; }
+
+    long nearbyLegs() { return nearbyLegs; }
 
     long count(EmptyLegPath path) {
         return inside.get(path).size + outside.get(path).size;
@@ -257,6 +263,7 @@ final class EmptyLegStats {
             m.put(k + "_over_12km_count", (double) countOver(p, 12.0));
             m.put(k + "_orphan_km", orphanKm(p));
         }
+        m.put("EMPTY_LEGS.nearby_legs", (double) nearbyLegs);
         m.put("EMPTY_LEGS.orphan_count", (double) orphanCount());
         m.put("EMPTY_LEGS.orphan_mid_shift_count", (double) orphanCount(false));
         m.put("EMPTY_LEGS.orphan_end_of_shift_count", (double) orphanCount(true));

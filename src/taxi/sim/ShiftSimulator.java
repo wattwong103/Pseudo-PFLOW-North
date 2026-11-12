@@ -95,6 +95,9 @@ class ShiftSimulator {
     private final EmptyLegStats emptyLegStats = new EmptyLegStats();
     // Path of the most recent sampleDualModeEmptyLeg() result (single-threaded).
     private EmptyLegPath lastEmptyLegPath = EmptyLegPath.FIRST_DRAW;
+    // TASK-13: road km of the cruising path of the most recent nearby-cruise empty leg, or NaN when the
+    // leg's distance is the end-point distance (single-threaded, reset by every sampleDualModeEmptyLeg()).
+    private double lastEmptyCruiseKm = Double.NaN;
 
     ShiftSimulator(TaxiConfig config, TaxiSimulation host,
                    ModeMixResolver modeMix, Random random,
@@ -119,6 +122,12 @@ class ShiftSimulator {
                     : prhsWindowsToday.toString()));
         }
     }
+
+    /** Test hook: cruise km of the last sampled DUAL_MODE empty leg (NaN unless a nearby cruise). */
+    double lastCruiseKmForTest() { return lastEmptyCruiseKm; }
+
+    /** Test hook: path of the last sampled DUAL_MODE empty leg. */
+    EmptyLegPath lastPathForTest() { return lastEmptyLegPath; }
 
     EmptyLegStats getEmptyLegStats() {
         return emptyLegStats;
@@ -236,6 +245,7 @@ class ShiftSimulator {
             final ModeMixResolver.PickupMode pickupMode;
             final long emptyTravelTime;
             final EmptyLegPath emptyLegPath;
+            double cruiseKm = Double.NaN;  // TASK-13: set only by a nearby-cruise DUAL_MODE leg
 
             if (atStand) {
                 // Move to the hub's service point (its centroid unless WP0 anchored it); STAND pickup.
@@ -246,13 +256,18 @@ class ShiftSimulator {
             } else {
                 // DUAL_MODE: log-normal empty leg toward attractive zone centroid.
                 double[] emptyResult = sampleDualModeEmptyLeg(taxi, curLon, curLat, currentTime);
+                cruiseKm = lastEmptyCruiseKm;
                 pickupLon = emptyResult[0];
                 pickupLat = emptyResult[1];
                 pickupMode = modeMix.sampleStreetVsApp(type);
                 emptyLegPath = lastEmptyLegPath;
             }
 
-            double emptyRoadKm = host.calculateDistance(curLon, curLat, pickupLon, pickupLat);
+            // TASK-13: a nearby-cruise leg is driven (and recorded) over its drawn road km, not over the
+            // end-point distance; every other leg keeps the end-point distance.
+            final double emptyRoadKm = Double.isNaN(cruiseKm)
+                ? host.calculateDistance(curLon, curLat, pickupLon, pickupLat)
+                : cruiseKm;
             emptyTravelTime = TaxiTrip.estimateTravelTime(emptyRoadKm);
 
             // Emit empty-trip record for the cruise (above threshold).
@@ -260,7 +275,7 @@ class ShiftSimulator {
                 emptyLegStats.markOrphan(pendingEmptyPath, pendingEmptyKm, false);
             }
             if (emptyRoadKm > emptyTripThresholdKm) {
-                emitEmptyTrip(taxi, curLon, curLat, pickupLon, pickupLat, currentTime, emptyTravelTime);
+                emitEmptyTrip(taxi, curLon, curLat, pickupLon, pickupLat, currentTime, emptyTravelTime, cruiseKm);
                 TaxiGeoValidator zoneCheck = host.getGeoValidator();
                 emptyLegStats.record(emptyLegPath, emptyRoadKm,
                     zoneCheck == null || zoneCheck.isInOperatingZone(curLon, curLat));
@@ -402,37 +417,81 @@ class ShiftSimulator {
      * validation, projects to the nearest valid cell using the same spiral-grid
      * scan as the loaded-leg path.
      */
-    private double[] sampleDualModeEmptyLeg(TaxiAgent taxi, double curLon, double curLat, long currentTime) {
+    double[] sampleDualModeEmptyLeg(TaxiAgent taxi, double curLon, double curLat, long currentTime) {
         // Same draw order as before WP0 (distance, target, bearing), so a run
         // without an operating zone keeps its random stream.
+        lastEmptyCruiseKm = Double.NaN;
         final double roadKm = drawEmptyRoadKm();
         final DestinationZone target = pickAttractiveZone(currentTime, curLon, curLat);
-        final double[] first = moveToward(target, curLon, curLat, roadKm);
+        // TASK-13: with probability nearby.trip.probability the vehicle cruises near the drop-off: the
+        // pickup lies within nearby.trip.radius.km, the leg still drives (and records) its drawn road km.
+        // The coin is drawn only when the feature is on, so a run with use.nearby.trips=false keeps its
+        // random stream.
+        final boolean nearby = config.isUseNearbyTrips()
+            && random.nextDouble() < config.getNearbyTripProbability();
+        final double[] cruiseKm = {Double.NaN};
+        final double[] first = placeEmptyLeg(target, curLon, curLat, roadKm, nearby, cruiseKm);
+        if (nearby) emptyLegStats.recordNearbyLeg();
 
         TaxiGeoValidator gv = host.getGeoValidator();
-        if (gv == null || !gv.isOperatingZoneEnabled()) return first;
+        if (gv == null || !gv.isOperatingZoneEnabled()) {
+            lastEmptyCruiseKm = cruiseKm[0];
+            return first;
+        }
 
         // WP0: the cruising end point is the pickup, which must lie inside the
         // operating zone. Re-draw the distance toward the same target; after
         // operating.zone.pickup.max.attempts, deadhead to the target centroid
         // (eligible zones are inside the zone and on valid land).
         final EmptyLegPath firstPath = lastEmptyLegPath;
+        final double firstCruiseKm = cruiseKm[0];
         DestinationZone anchor = target != null ? target : host.nearestEligibleZone(curLon, curLat);
         double[] fallback = anchor != null
             ? new double[]{anchor.getAnchorLon(), anchor.getAnchorLat()}
             : new double[]{curLon, curLat};
         final boolean[] firstUsed = {false};
+        final double[] acceptedCruiseKm = {Double.NaN};
         InZoneResult r = acceptInZone(() -> {
             if (!firstUsed[0]) {
                 firstUsed[0] = true;
+                acceptedCruiseKm[0] = firstCruiseKm;
                 return first;
             }
-            return moveToward(target, curLon, curLat, drawEmptyRoadKm());
+            double[] ck = {Double.NaN};
+            double[] p = placeEmptyLeg(target, curLon, curLat, drawEmptyRoadKm(), nearby, ck);
+            acceptedCruiseKm[0] = ck[0];
+            return p;
         }, gv::isInOperatingZone, fallback, config.getOperatingZoneMaxAttempts());
         emptyLegStats.recordAttempts(r.attempts);
         lastEmptyLegPath = r.fellBack ? EmptyLegPath.CENTROID_DEADHEAD
             : (r.attempts == 1 ? firstPath : EmptyLegPath.RESAMPLED);
+        // A resampled nearby leg keeps its cruise km; a deadhead is driven to the centroid as before.
+        lastEmptyCruiseKm = r.fellBack ? Double.NaN : acceptedCruiseKm[0];
         return new double[]{r.lon, r.lat};
+    }
+
+    /**
+     * One candidate end point: the whole drawn distance toward the target (legacy), or, for a nearby
+     * cruise, a displacement of min(roadKm / manhattan, R * sqrt(U)); the cruise km (the drawn road
+     * km) is returned in cruiseKmOut[0]. A nearby cruise whose projection fails (STAY_PUT) is a
+     * zero-length leg as before, so cruiseKmOut stays NaN.
+     */
+    private double[] placeEmptyLeg(DestinationZone target, double curLon, double curLat,
+                                   double roadKm, boolean nearby, double[] cruiseKmOut) {
+        cruiseKmOut[0] = Double.NaN;
+        if (!nearby) return moveToward(target, curLon, curLat, roadKm);
+        double d = nearbyDisplacementKm(roadKm, manhattanFactor, config.getNearbyTripRadiusKm(),
+            random.nextDouble());
+        double[] p = moveKmToward(target, curLon, curLat, d);
+        if (lastEmptyLegPath == EmptyLegPath.FIRST_DRAW) lastEmptyLegPath = EmptyLegPath.NEARBY_CRUISE;
+        else if (lastEmptyLegPath == EmptyLegPath.PROJECTED) lastEmptyLegPath = EmptyLegPath.NEARBY_PROJECTED;
+        if (lastEmptyLegPath != EmptyLegPath.STAY_PUT) cruiseKmOut[0] = roadKm;
+        return p;
+    }
+
+    /** TASK-13: displacement (great-circle km) of a nearby cruise: min(roadKm / manhattan, R * sqrt(U)). */
+    static double nearbyDisplacementKm(double roadKm, double manhattanFactor, double radiusKm, double u) {
+        return Math.min(roadKm / manhattanFactor, radiusKm * Math.sqrt(u));
     }
 
     /** Result of {@link #acceptInZone}: the accepted point, draws used, and whether it fell back. */
@@ -480,7 +539,11 @@ class ShiftSimulator {
      * put if projection fails. Sets {@link #lastEmptyLegPath}.
      */
     private double[] moveToward(DestinationZone target, double curLon, double curLat, double roadKm) {
-        double haversineKm = roadKm / manhattanFactor;
+        return moveKmToward(target, curLon, curLat, roadKm / manhattanFactor);
+    }
+
+    /** {@link #moveToward} for a displacement given as great-circle km. */
+    private double[] moveKmToward(DestinationZone target, double curLon, double curLat, double haversineKm) {
 
         // Determine bearing: toward target centroid, or uniform random if no zone.
         double dxKm, dyKm;
@@ -671,9 +734,10 @@ class ShiftSimulator {
     /** Construct + record an empty trip and update its taxi's assigned list. */
     private void emitEmptyTrip(TaxiAgent taxi, double srcLon, double srcLat,
                                double dstLon, double dstLat,
-                               long startTime, long travelTime) {
+                               long startTime, long travelTime, double cruiseKm) {
         TaxiTrip emptyTrip = TaxiTrip.createEmptyTrip(host.nextTripId(),
             srcLon, srcLat, dstLon, dstLat, startTime);
+        if (!Double.isNaN(cruiseKm)) emptyTrip.setDistanceKm(cruiseKm);  // TASK-13
         emptyTrip.setTimes(startTime, startTime + travelTime);
         emptyTrip.setAssignedTaxiId(taxi.getTaxiId());
         emptyTrip.setStatus(TaxiTrip.TripStatus.COMPLETED);

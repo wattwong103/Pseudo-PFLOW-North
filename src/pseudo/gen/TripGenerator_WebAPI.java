@@ -101,7 +101,7 @@ public class TripGenerator_WebAPI {
 				sslContext,
 				new String[]{"TLSv1.2", "TLSv1.3"}, // Specify the TLS versions
 				null,
-				(hostname, session) -> hostname.equals("157.82.223.35")); // This bypasses hostname verification. Use with caution.
+				(hostname, session) -> hostname.equals(System.getenv("PFLOW_API_HOST"))); // This bypasses hostname verification. Use with caution.
 
 
 		PoolingHttpClientConnectionManager cm = new PoolingHttpClientConnectionManager(

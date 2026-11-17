@@ -99,6 +99,7 @@ DIGITS_RE = re.compile(r"[0-9]+")
 MANIFEST = "MANIFEST.sha256"
 SIDECAR = "release.json"
 OS_JUNK_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}  # compared lower-case
+DAY_SECONDS = 86400
 RENAME_ATTEMPTS = 5
 RENAME_BACKOFF_S = 0.5  # doubles after each failed attempt
 PERSON_PID_INDEX = PERSON_COLUMNS.index("person_id")
@@ -176,13 +177,16 @@ def _discover(directory: Path, kind: str) -> dict:
 def _row_rule(semantics: str):
     """A fresh per-file row check for a trip layout, or None when the layout has no content rule.
 
-    The check takes one row (already the right length) and returns a problem string or None.
+    The check takes one row (already the right length) and returns a problem string or None;
+    _scan calls it once more with None after the last row.
     """
     def problem(text):
         return f"{text}; these are not {semantics} rows"
 
     if semantics == "v3_12col":
         def check(row):
+            if row is None:
+                return None
             subtrip_id, rep_mode = row[TRIP_ID_INDEX + 1], row[TRIP_ID_INDEX + 2]
             if subtrip_id not in SUBTRIP_IDS:
                 return problem(f"subtrip_id {subtrip_id!r} is not a leg index 0-9")
@@ -191,15 +195,29 @@ def _row_rule(semantics: str):
             return None
         return check
     if semantics == "v3_3_12col":
+        # One row can look like a v3.2 row (a midnight stay-home row with trip_id 1001 fits every
+        # row rule), but a v3.3 file also chains each person's rows: seq 1, 2, 3 in file order,
+        # duration = gap to the next departure, and the last duration = 86400 - dep_time.
         seen = set()
+        prev = None  # (pid, seq, dep, duration) of the previous row
+
+        def last_trip_problem(prev_row):
+            pid, seq, dep, duration = prev_row
+            expected = max(0, DAY_SECONDS - dep)
+            if duration != expected:
+                return problem(f"person {pid}'s last trip (seq {seq}) has duration {duration}, "
+                               f"not {expected} (86400 - dep_time)")
+            return None
 
         def check(row):
+            nonlocal prev
+            if row is None:
+                return last_trip_problem(prev) if prev else None
             # digits only: int() would also take "+1001", "1_001" and " 1001 ", which the generator never writes
             for name, index in V33_INT_FIELDS:
                 if not DIGITS_RE.fullmatch(row[index]):
                     return f"{name} {row[index]!r} is not a plain non-negative integer"
-            pid, dep, trip_id, arr = (int(row[i]) for i in (TRIP_PID_INDEX, TRIP_DEP_INDEX,
-                                                            TRIP_ID_INDEX, TRIP_ID_INDEX + 1))
+            pid, dep, trip_id, arr, duration = (int(row[index]) for _, index in V33_INT_FIELDS)
             if trip_id // 1000 != pid or trip_id % 1000 == 0:
                 return problem(f"trip_id {trip_id} is not person_id {pid} x 1000 + seq (seq 1-999)")
             if arr < dep:
@@ -207,6 +225,22 @@ def _row_rule(semantics: str):
             if trip_id in seen:
                 return f"duplicate trip_id {trip_id} (trip_id must be unique in a file)"
             seen.add(trip_id)
+            seq = trip_id % 1000
+            if prev is not None and prev[0] == pid:
+                if seq != prev[1] + 1:
+                    return problem(f"trip_id {trip_id} follows seq {prev[1]}; a person's trips are "
+                                   "numbered 1, 2, 3 in file order")
+                gap = max(0, dep - prev[2])
+                if prev[3] != gap:
+                    return problem(f"the row before has duration {prev[3]}, not the gap {gap} to this departure")
+            else:
+                if prev is not None:
+                    found = last_trip_problem(prev)
+                    if found:
+                        return found
+                if seq != 1:
+                    return problem(f"person {pid}'s first trip has seq {seq}, not 1")
+            prev = (pid, seq, dep, duration)
             return None
         return check
     return None
@@ -229,6 +263,10 @@ def _scan(path: Path, expected: int, pid_index: int, expect_label: str, row_rule
                     raise ValueError(f"{path.name} line {lineno}: {problem}")
             rows += 1
             pids.add(row[pid_index])
+    if row_rule is not None:
+        problem = row_rule(None)
+        if problem:
+            raise ValueError(f"{path.name} at end of file: {problem}")
     if rows == 0:
         raise ValueError(f"{path.name} has no data rows")
     return rows, pids

@@ -330,6 +330,7 @@ public class PersonAccessor{
             Person person = null;
             long preId = 0;
             int legacySeq = 0;
+            V33Chain chain = new V33Chain();
             while ((line = br.readLine()) != null) {
             	String[] items = line.split(",");
             	if (items.length < 9) {
@@ -367,6 +368,7 @@ public class PersonAccessor{
             					+ " rep_mode), which loadTrips does not read; it reads v3.3 rows (trip_id, arr_time,"
             					+ " duration) and 9-column rows");
             		}
+            		chain.accept(nextId, tripId % TRIP_SEQ_MODULUS, depTime, Long.parseLong(items[11]));
             		trip.setTripId(tripId);
             		trip.setArrTime(arrTime);
             		trip.setSubtripId(0);
@@ -378,10 +380,55 @@ public class PersonAccessor{
 
             	preId = nextId;
             }
+            chain.finish();
         } catch (Exception e) {
             throw new RuntimeException("Failed to load trips: " + filename, e);
         }
 		return res;
+	}
+
+	/**
+	 * How writeTrips chains a person's v3.3 rows: seq 1, 2, 3 in file order, each duration the gap to
+	 * the next departure, the last one 86400 - dep_time (never below 0). One row alone can look like
+	 * a v3.2 row (a midnight stay-home row with trip_id 1001); a person's rows together cannot.
+	 */
+	private static final class V33Chain {
+		private boolean started = false;
+		private long pid;
+		private long seq;
+		private long dep;
+		private long duration;
+
+		void accept(long nextPid, long nextSeq, long nextDep, long nextDuration) {
+			if (started && nextPid == pid) {
+				long gap = Math.max(0L, nextDep - dep);
+				if (nextSeq != seq + 1 || duration != gap) {
+					throw notV33("person " + pid + ": trip seq " + nextSeq + " after seq " + seq
+							+ " with duration " + duration + " (gap to this departure " + gap + ")");
+				}
+			} else {
+				finish();
+				if (nextSeq != 1) {
+					throw notV33("person " + nextPid + "'s first trip has seq " + nextSeq);
+				}
+			}
+			started = true;
+			pid = nextPid;
+			seq = nextSeq;
+			dep = nextDep;
+			duration = nextDuration;
+		}
+
+		void finish() {
+			if (started && duration != Math.max(0L, DAY_SECONDS - dep)) {
+				throw notV33("person " + pid + "'s last trip (seq " + seq + ") has duration " + duration
+						+ ", not " + Math.max(0L, DAY_SECONDS - dep) + " (86400 - dep_time)");
+			}
+		}
+
+		private static IllegalArgumentException notV33(String what) {
+			return new IllegalArgumentException(what + ": not a v3.3 trip file (a v3.2 subtrip file?)");
+		}
 	}
 
 	public static final class CollapsedTrip {

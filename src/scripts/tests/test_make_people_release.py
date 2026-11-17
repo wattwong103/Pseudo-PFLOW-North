@@ -674,3 +674,43 @@ def test_v3_3_stay_home_row_passes(tmp_path):
     p, t = _v33_run(tmp_path)
     _write_trips(t, "13102", [[3, 0, 139.7, 35.6, 139.7, 35.6, 0, 1, 21, 3001, 0, 86400]])
     build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+
+
+# --- per-person chain (Codex re-check): a single row cannot always be told apart, a person's rows can ---
+
+def _refuse_v33(tmp_path, rows_13101, match):
+    p, t = _v33_run(tmp_path)
+    _write_trips(t, "13101", rows_13101)
+    with pytest.raises(ValueError, match=match):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+def test_v3_3_gate_refuses_a_midnight_v32_row_that_fits_every_row_rule(tmp_path):
+    # pid 1, dep 0, trip_id 1001, subtrip_id 0 read as arr_time 0, rep_mode 0 read as duration 0
+    rows = [[1, 0, 139.7, 35.6, 139.7, 35.6, 0, 1, 21, 1001, 0, 0]] + _v33_rows([2])
+    _refuse_v33(tmp_path, rows, r"line 2: person 1's last trip \(seq 1\) has duration 0, not 86400")
+
+
+def test_v3_3_gate_checks_the_last_row_of_the_file(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[-1][11] = 25000
+    _refuse_v33(tmp_path, rows, r"trip_13101.csv at end of file: person 2's last trip \(seq 2\) has duration 25000, not 25200")
+
+
+def test_v3_3_gate_refuses_a_gap_in_a_persons_trip_numbers(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[1][9] = 1003
+    _refuse_v33(tmp_path, rows, r"line 2: trip_id 1003 follows seq 1")
+
+
+def test_v3_3_gate_refuses_a_first_trip_that_is_not_seq_1(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[2][9], rows[3][9] = 2002, 2003
+    _refuse_v33(tmp_path, rows, r"line 3: person 2's first trip has seq 2")
+
+
+def test_v3_3_gate_refuses_a_duration_that_is_not_the_gap_to_the_next_departure(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[0][11] = 30000
+    _refuse_v33(tmp_path, rows, r"line 2: the row before has duration 30000, not the gap 32400")

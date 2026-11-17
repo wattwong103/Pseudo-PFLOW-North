@@ -353,4 +353,24 @@ public class PersonAccessorTripFormatTest {
 		String msg = e.getMessage() + " / " + (e.getCause() == null ? "" : e.getCause().getMessage());
 		assertTrue(msg.contains("v3.2"), msg);
 	}
+
+	@Test
+	public void loadTripsRefusesAMidnightV32RowThatFitsEveryRowRule() throws Exception {
+		// Codex re-check: dep 0, trip_id 1001, subtrip_id 0 (read as arr 0), rep_mode 0 (read as
+		// duration 0). A v3.3 person's last trip lasts 86400 - dep_time, so the chain refuses it.
+		File f = writeLines("trip-v32-midnight", "1,0,139.7,35.6,139.7,35.6,0" + tail(EPurpose.HOME) + ",1001,0,0");
+		RuntimeException e = assertThrows(RuntimeException.class,
+				() -> PersonAccessor.loadTrips(f.getAbsolutePath()));
+		String msg = e.getMessage() + " / " + (e.getCause() == null ? "" : e.getCause().getMessage());
+		assertTrue(msg.contains("86400"), msg);
+	}
+
+	@Test
+	public void loadTripsRefusesAGapInAPersonsTripNumbers() throws Exception {
+		String t = tail(EPurpose.OFFICE);
+		File f = writeLines("trip-v33-gap",
+				"1,28800,139.7,35.6,139.8,35.7,4" + t + ",1001,30600,32400",
+				"1,61200,139.8,35.7,139.7,35.6,4" + t + ",1003,63000,25200");
+		assertThrows(RuntimeException.class, () -> PersonAccessor.loadTrips(f.getAbsolutePath()));
+	}
 }

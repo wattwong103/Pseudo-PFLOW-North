@@ -92,6 +92,7 @@ COMPUTED_META = ("date", "lane", "location", "columns", "totals", "gates")
 
 NAME_RE = re.compile(r"v\d+\.\d+(-[a-z]+)?-\d{8}-[a-z0-9]+-s\d{1,3}")
 CITY_RE = re.compile(r"\d{5}")
+DIGITS_RE = re.compile(r"[0-9]+")
 MANIFEST = "MANIFEST.sha256"
 SIDECAR = "release.json"
 OS_JUNK_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}  # compared lower-case
@@ -187,15 +188,16 @@ def _row_rule(semantics: str):
         seen = set()
 
         def check(row):
-            try:
-                pid, trip_id = int(row[TRIP_PID_INDEX]), int(row[TRIP_ID_INDEX])
-            except ValueError:
-                return problem(f"trip_id {row[TRIP_ID_INDEX]!r} is not an integer "
-                               f"(pid {row[TRIP_PID_INDEX]!r})")
+            pid_text, trip_text = row[TRIP_PID_INDEX], row[TRIP_ID_INDEX]
+            # digits only: int() would also take "+1001", "1_001" and " 1001 ", which the generator never writes
+            for name, text in (("pid", pid_text), ("trip_id", trip_text)):
+                if not DIGITS_RE.fullmatch(text):
+                    return f"{name} {text!r} is not a plain non-negative integer"
+            pid, trip_id = int(pid_text), int(trip_text)
             if trip_id // 1000 != pid or trip_id % 1000 == 0:
                 return problem(f"trip_id {trip_id} is not person_id {pid} x 1000 + seq (seq 1-999)")
             if trip_id in seen:
-                return problem(f"duplicate trip_id {trip_id}")
+                return f"duplicate trip_id {trip_id} (trip_id must be unique in a file)"
             seen.add(trip_id)
             return None
         return check

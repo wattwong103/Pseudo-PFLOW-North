@@ -611,7 +611,11 @@ def test_v3_12col_gate_checks_subtrip_and_rep_mode(tmp_path, bad, match):
 @pytest.mark.parametrize("trip_id, match", [
     (2000, r"trip_id 2000 is not person_id 2 x 1000 \+ seq"),   # seq 0
     (3001, r"trip_id 3001 is not person_id 2 x 1000 \+ seq"),   # another person's id
-    ("2x01", r"trip_id '2x01' is not an integer"),
+    ("2x01", r"trip_id '2x01' is not a plain non-negative integer"),
+    ("+2001", r"trip_id '\+2001' is not a plain non-negative integer"),
+    ("2_001", r"trip_id '2_001' is not a plain non-negative integer"),
+    (" 2001", r"trip_id ' 2001' is not a plain non-negative integer"),
+    ("2001.0", r"trip_id '2001.0' is not a plain non-negative integer"),
 ])
 def test_v3_3_gate_checks_trip_id_encoding(tmp_path, trip_id, match):
     p, t = _v33_run(tmp_path)
@@ -628,6 +632,7 @@ def test_v3_3_gate_refuses_duplicate_trip_id(tmp_path):
     rows = _v33_rows([1, 2])
     rows[1][9] = rows[0][9]
     _write_trips(t, "13101", rows)
-    with pytest.raises(ValueError, match=r"trip_13101.csv line 2: duplicate trip_id 1001"):
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 2: duplicate trip_id 1001") as err:
         build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert "not v3_3_12col rows" not in str(err.value)  # the layout is right; only the id repeats
     assert _no_release(tmp_path)

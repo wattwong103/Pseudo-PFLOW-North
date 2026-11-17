@@ -159,8 +159,6 @@
 					-->
 					<excludes>
 						<!-- archive/experimental/dcity/aggr stays in: taxi.sim imports dcity.aggr. -->
-						<exclude>archive/experimental/sim/**</exclude>
-						<exclude>archive/experimental/dcity/gtfs/**</exclude>
 						<exclude>dcity/**</exclude>
 						<exclude>gtfs/**</exclude>
 						<exclude>pseudo/gen/TripGenerator_WebAPI.java</exclude>

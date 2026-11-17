@@ -103,16 +103,19 @@ public class LinkVolume {
 	}
 
 	public static void main(String[] args) {
-		
-		File pFile = new File("C:/Users/ksym2/Desktop/tokyo/gisa/susono_2/output.csv");
+		if (args.length < 3) {
+			System.err.println("Usage: LinkVolume <pflow.csv> <drm_network.txt> <output.csv>");
+			System.exit(1);
+		}
+		File pFile = new File(args[0]);
 		List<Person> listPerson = DataLoader.loadPFlow(pFile);
 		System.out.println(listPerson.size());
 		
-		File nFile = new File("C:/Users/ksym2/Desktop/digitalcity/drm/seidrm2017_22.txt");
+		File nFile = new File(args[1]);
 		Network network = DataLoader.loadNetwork(nFile);
 		System.out.println(network.linkCount());
 		
-		File oFile = new File("C:/Users/ksym2/Desktop/output/result.csv");
+		File oFile = new File(args[2]);
 		LinkVolume volume = new LinkVolume();
 		Map<String,Map<String, Integer>> result = volume.process(listPerson, network);
 		write(oFile, result, network);

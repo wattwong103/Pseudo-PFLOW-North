@@ -23,11 +23,6 @@ The run scripts live in the PFLOW workspace folder `scripts/`, one level above t
 | `scripts/run_audit_pipeline.sh` | Full pipeline (Unix) |
 | `scripts/archive/run_audit_traj_only.bat` | Archived 2026-10-22, not a live script: trajectory phase only (re-used prior trip CSVs) |
 
-## Unit tests
-
-`mvn -o test` (JDK 21) runs every JUnit 5 suite under `src/test/java`.
-Three stale truck tests are excluded in `pom.xml` (`testExcludes`).
-
 Pipeline stage flow:
 
 ```
@@ -54,6 +49,13 @@ mvn dependency:resolve
 …populates `~/.m2/repository/` with JTS, GeoTools, HSQLDB, EJML, etc., which
 the `native/build_*` scripts add to the classpath. The actual `javac`
 invocation lives in those scripts.
+
+### Unit tests
+
+`mvn -o test` (JDK 21) runs the JUnit 5 suites under `src/test/java`, except three
+stale truck tests excluded in `pom.xml` (`testExcludes`). Maven compiles against
+GeoTools 26.5; the simulation scripts run on their own classpath (taxi: GeoTools
+20.1), so a green `mvn test` is not evidence for a calibration run.
 
 ## Heap sizing
 

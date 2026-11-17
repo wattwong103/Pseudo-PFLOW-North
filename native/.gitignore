@@ -1,0 +1,6 @@
+# Built JNI shared libraries (regenerable via build_mac.sh / build_win.bat)
+lib/
+*.dylib
+*.so
+*.dll
+*.o

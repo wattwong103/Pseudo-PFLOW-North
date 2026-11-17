@@ -44,7 +44,9 @@ public class PersonAccessor{
 		
 		int counter = 0;
 		try (BufferedReader br = new BufferedReader(new FileReader(filename));){
-            String line = br.readLine();
+            // Person files are headerless (write() below and PersonGenerator write none): line 1 is a person.
+            // A file with a header row fails on its first number, which is what it should do.
+            String line;
             HouseHold household = null;
             while ((line = br.readLine()) != null) {
             	String[] items = line.split(",");

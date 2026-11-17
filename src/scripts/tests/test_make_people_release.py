@@ -758,3 +758,41 @@ def test_v3_3_gate_still_refuses_a_sign_on_ids_and_duration(tmp_path, col, name)
     with pytest.raises(ValueError, match=rf"trip_13101.csv line 1: {name} '-\d+' is not a plain non-negative integer"):
         build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
     assert _no_release(tmp_path)
+
+
+def test_v3_3_gate_refuses_an_arrival_before_a_negative_departure(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rows = [[1, -100, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1001, -200, 86500]] + _v33_rows([2])
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: arr_time -200 is before dep_time -100"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+def test_v3_3_chain_works_across_midnight(tmp_path):
+    # Person 1 leaves at -600 (23:50 the evening before), then at 28800; the first duration spans midnight.
+    p, t = _v33_run(tmp_path)
+    rows = [[1, -600, 139.7, 35.6, 139.8, 35.7, 3, 2, 21, 1001, 300, 29400],
+            [1, 28800, 139.8, 35.7, 139.7, 35.6, 3, 1, 21, 1002, 30600, 57600]] + _v33_rows([2])
+    _write_trips(t, "13101", rows)
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert verify_release(rel) == []
+
+
+def test_v3_3_chain_refuses_a_wrong_duration_across_midnight(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rows = [[1, -600, 139.7, 35.6, 139.8, 35.7, 3, 2, 21, 1001, 300, 28800],  # should be 29400
+            [1, 28800, 139.8, 35.7, 139.7, 35.6, 3, 1, 21, 1002, 30600, 57600]] + _v33_rows([2])
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"line 2: the row before has duration 28800, not the gap 29400"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+
+
+@pytest.mark.parametrize("value", ["−4036", " -4036", "-4036 "])
+def test_v3_3_gate_refuses_a_unicode_minus_and_whitespace(tmp_path, value):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[0][1] = value
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: dep_time .* is not a plain integer"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())

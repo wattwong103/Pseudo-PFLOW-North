@@ -64,10 +64,6 @@ Tokyo has additional config variants for subsample testing and PRHS scenarios:
 GSA-related artifacts in Tokyo (`gsa_params.csv`, `morris_results.csv`, `sobol_results.csv`)
 are sensitivity-analysis aggregates, not configs — see `gsa-lead` agent.
 
-## `config/archive/`
-
-Historical configs preserved for traceability. Not loaded by current runs.
-
 ## `${PFLOW_HOME}` tokens
 
 Property values can include the literal token `${PFLOW_HOME}`, e.g.

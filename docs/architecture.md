@@ -112,8 +112,8 @@ The classpath-resource config for this module is
 | `src/util/` | `PathResolver` — resolves `${PFLOW_HOME}` tokens at runtime |
 | `src/utils/` | Additional helpers |
 
-Other source roots (`src/gtfs/`, `src/network/`, `src/otp/`, `src/particle/`,
-`src/pt/`, `src/sim/`) hold legacy / experimental code retained for reference.
+Other source roots (`src/gtfs/`, `src/network/`,
+`src/pt/`) hold legacy / experimental code retained for reference.
 
 ## `lib/pflowlib.jar` API
 

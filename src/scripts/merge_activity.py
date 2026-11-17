@@ -30,7 +30,7 @@ FORMAT
 
 USAGE
   python merge_activity.py [--pref 13] [--pflow-home PATH] [--min-bytes 137]
-  Env: PFLOW_HOME (default: two levels up from this repo, or D:/Dropbox/PFLOW)
+  Env: PFLOW_HOME (default: two levels up from this repo, or ~/Dropbox/PFLOW on POSIX / H:/Dropbox/PFLOW on Windows)
 """
 
 import argparse
@@ -52,7 +52,9 @@ def default_pflow_home():
     guess = os.path.abspath(os.path.join(here, "..", "..", ".."))
     if os.path.isdir(os.path.join(guess, "data", "census", "person")):
         return guess
-    return "D:/Dropbox/PFLOW"
+    if os.name == "nt":
+        return "H:/Dropbox/PFLOW"
+    return os.path.expanduser("~/Dropbox/PFLOW")
 
 
 def merge_pref(pflow_home, pref, min_bytes):

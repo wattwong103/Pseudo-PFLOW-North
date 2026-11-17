@@ -4,6 +4,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
+import util.PathResolver;
 
 /**
  * Sobol indices driver for Tokyo Taxi ABM (B5 / Phase 8.2 — DESIGN.md §3).
@@ -157,6 +158,10 @@ public class SobolDriver {
             .collect(java.util.stream.Collectors.toList());
     }
 
+    static Path resolveTokyoTripsDir() {
+        return Paths.get(PathResolver.getPflowHome(), "output", "trips", "taxi", "tokyo");
+    }
+
     static void cmdAggregate(String[] args) throws Exception {
         if (args.length < 5) { usage(); return; }
         Path morrisCsv = Paths.get(args[1]);
@@ -185,9 +190,7 @@ public class SobolDriver {
         double[][] y = new double[METRICS.length][total];
         boolean[] valid = new boolean[total];
 
-        String pflowHome = System.getenv("PFLOW_HOME");
-        if (pflowHome == null) pflowHome = "H:/Dropbox/PFLOW";
-        Path tokyoOutBase = Paths.get(pflowHome, "output/trips/taxi/tokyo");
+        Path tokyoOutBase = resolveTokyoTripsDir();
 
         for (int i = 1; i < manifest.size(); i++) {
             String[] cols = manifest.get(i).split(",", -1);

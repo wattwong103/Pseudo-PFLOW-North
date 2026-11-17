@@ -4,6 +4,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
+import util.PathResolver;
 
 /**
  * Morris elementary-effects (EE) screening driver for Tokyo Taxi ABM
@@ -152,6 +153,10 @@ public class MorrisDriver {
     }
 
     /** Read all sample validation.csv outputs; compute Morris mu-star and sigma per parameter. */
+    static Path resolveTokyoTripsDir() {
+        return Paths.get(PathResolver.getPflowHome(), "output", "trips", "taxi", "tokyo");
+    }
+
     static void cmdAggregate(String[] args) throws Exception {
         if (args.length < 4) { usage(); return; }
         Path paramsCsv = Paths.get(args[1]);
@@ -168,9 +173,7 @@ public class MorrisDriver {
         // Map sampleId → grade (% of validation tests passed). Each sim writes
         // its output to ${PFLOW_HOME}/output/trips/taxi/tokyo/gsa_sample_NNNN/run_TIMESTAMP/.
         // Glob for the most recent run_* subdir per sample.
-        String pflowHome = System.getenv("PFLOW_HOME");
-        if (pflowHome == null) pflowHome = "H:/Dropbox/PFLOW";
-        Path tokyoOutBase = Paths.get(pflowHome, "output/trips/taxi/tokyo");
+        Path tokyoOutBase = resolveTokyoTripsDir();
 
         Map<Integer, Double> grades = new LinkedHashMap<>();
         for (int i = 1; i < manifest.size(); i++) {

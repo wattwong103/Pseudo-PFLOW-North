@@ -119,15 +119,19 @@ public class BoundaryVolume {
 	}
 	
 	public static void main(String[] args) {
-		File pFile = new File("C:/Users/ksym2/Desktop/tokyo/gisa/susono_2/output.csv");
+		if (args.length < 3) {
+			System.err.println("Usage: BoundaryVolume <pflow.csv> <mesh.shp> <output.csv>");
+			System.exit(1);
+		}
+		File pFile = new File(args[0]);
 		List<Person> listPerson = DataLoader.loadPFlow(pFile);
 		System.out.println(listPerson.size());
 		
-		String shpFilename = "C:/Users/ksym2/Desktop/mesh/mesh.shp";
+		String shpFilename = args[1];
 		Boundaries boudaries = Boundaries.create(shpFilename);
 		System.out.println(boudaries.size());
 		
-		File oFile = new File("C:/Users/ksym2/Desktop/bresult.csv");
+		File oFile = new File(args[2]);
 		BoundaryVolume volume = new BoundaryVolume();
 		Map<Integer,Map<String, Integer>> result = volume.process(listPerson, boudaries);
 		write(oFile, result, boudaries);

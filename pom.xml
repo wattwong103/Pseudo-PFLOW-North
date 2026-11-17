@@ -149,8 +149,13 @@
 					JUnit 5 suites; they compile against GeoTools 26.5 here, while
 					calibration runs keep their own build (run_taxi.bat puts the
 					GeoTools 20.1 jars on the classpath), so this changes no
-					simulation output. traj/ stays excluded as before (not
-					re-checked in TASK-16).
+					simulation output. traj/ is built too (TASK-19): it uses only the
+					in-source routing library, pseudo.res, util.PathResolver and JTS; building it is
+					what notices when that library moves (it moved to org.locationtech
+					in 98cd478 and traj did not follow). The traj runners keep their
+					own classpath (scripts/compile_traj.*, GeoTools 20.1 and
+					jts-core 1.16), so a green Maven build here is a sync check,
+					not proof that the runner build links.
 					-->
 					<excludes>
 						<!-- archive/experimental/dcity/aggr stays in: taxi.sim imports dcity.aggr. -->
@@ -164,7 +169,6 @@
 						<exclude>pseudo/gen/TripGenerator_WebAPI_GTFS_OpenTripPlanner.java</exclude>
 						<exclude>pseudo/gen/STInterpolatedPoints.java</exclude>
 						<exclude>test/**</exclude>
-						<exclude>traj/**</exclude>
 					</excludes>
 					<!-- Stale against the frozen truck code; they no longer compile
 					     (ZoneLoadResult and FleetFactory constructors changed,

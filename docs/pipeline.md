@@ -13,13 +13,15 @@ under `native/`.
 `bin/` holds the compiled `.class` tree. It is gitignored, regenerable, and
 required at runtime — every `run_audit_*` script expects it to be populated.
 
-## Audit pipeline (repo root)
+## Audit pipeline (workspace `scripts/`, outside this repo)
+
+The run scripts live in the PFLOW workspace folder `scripts/`, one level above this repo, not at the repo root.
 
 | Script | Purpose |
 |---|---|
-| `run_audit_pipeline.bat` | Full pipeline (Windows): compile → truck sim → taxi sim → trajectory → validation |
-| `run_audit_pipeline.sh` | Full pipeline (Unix) |
-| `run_audit_traj_only.bat` | Trajectory-generation phase only (re-uses prior trip CSVs) |
+| `scripts/run_audit_pipeline.bat` | Full pipeline (Windows): compile → truck sim → taxi sim → trajectory → validation |
+| `scripts/run_audit_pipeline.sh` | Full pipeline (Unix) |
+| `scripts/archive/run_audit_traj_only.bat` | Archived 2026-10-22, not a live script: trajectory phase only (re-used prior trip CSVs) |
 
 Pipeline stage flow:
 
@@ -37,8 +39,9 @@ treated as LOCAL-ONLY. See [`config-schema.md`](config-schema.md) for the
 
 ## Maven (`pom.xml`)
 
-`pom.xml` is **not** the build system. It exists for dependency resolution
-only:
+`pom.xml` is not the build system for simulation runs: those are compiled and run by the
+`native/build_*` and workspace scripts. Maven resolves dependencies, compiles `src/` into
+`target/classes` and runs the unit tests (below). Dependency resolution:
 
 ```bash
 mvn dependency:resolve
@@ -47,6 +50,13 @@ mvn dependency:resolve
 …populates `~/.m2/repository/` with JTS, GeoTools, HSQLDB, EJML, etc., which
 the `native/build_*` scripts add to the classpath. The actual `javac`
 invocation lives in those scripts.
+
+### Unit tests
+
+`mvn -o test` (JDK 21) runs the JUnit 5 suites under `src/test/java`, except three
+stale truck tests excluded in `pom.xml` (`testExcludes`). Maven compiles against
+GeoTools 26.5; the simulation scripts run on their own classpath (taxi: GeoTools
+20.1), so a green `mvn test` is not evidence for a calibration run.
 
 ## Heap sizing
 

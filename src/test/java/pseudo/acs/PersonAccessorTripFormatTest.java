@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -224,5 +225,121 @@ public class PersonAccessorTripFormatTest {
 		assertEquals(1, rows.size());
 		assertTrue(rows.get(0).length >= 10, "trajectory row must append trip_id");
 		assertEquals(Long.toString(PID_A * 1000 + 1), rows.get(0)[9]);
+	}
+
+	// --- review fixes (TASK-15) ---
+
+	private static File writeLines(String prefix, String... lines) throws Exception {
+		File f = tempFile(prefix);
+		try (PrintWriter w = new PrintWriter(f, "UTF-8")) {
+			for (String line : lines) {
+				w.println(line);
+			}
+		}
+		return f;
+	}
+
+	private static String tail(EPurpose purpose) {
+		return "," + purpose.getId() + "," + ELabor.WORKER.getId();
+	}
+
+	@Test
+	public void loadTripsRefusesV32SubtripRows() throws Exception {
+		// v3.2-unified rows end with trip_id, subtrip_id, rep_mode; a mixed trip is 3 rows.
+		String t = tail(EPurpose.OFFICE);
+		File f = writeLines("trip-v32",
+				"5,28000,139.74,35.68,139.75,35.68,1" + t + ",1,0,4",
+				"5,28500,139.75,35.68,139.76,35.69,4" + t + ",1,1,4",
+				"5,28700,139.76,35.69,139.77,35.70,1" + t + ",1,2,4");
+		RuntimeException e = assertThrows(RuntimeException.class,
+				() -> PersonAccessor.loadTrips(f.getAbsolutePath()));
+		String msg = e.getMessage() + " / " + (e.getCause() == null ? "" : e.getCause().getMessage());
+		assertTrue(msg.contains("v3.2"), msg);
+	}
+
+	@Test
+	public void legacyNineColumnTripsGetOneTrajectoryIdEach() throws Exception {
+		File f = writeLines("trip-9col",
+				"7,28000,139.74,35.68,139.77,35.70,3" + tail(EPurpose.OFFICE),
+				"7,61200,139.77,35.70,139.74,35.68,3" + tail(EPurpose.HOME));
+		List<Person> loaded = PersonAccessor.loadTrips(f.getAbsolutePath());
+		Person p = loaded.get(0);
+		for (Trip t : p.listTrips()) { // as TrajectoryGenerator does: a point carries its trip's id
+			SPoint pt = new SPoint(t.getOrigin().getLon(), t.getOrigin().getLat(),
+					new Date(t.getDepTime() * 1000L), t.getTransport(), t.getPurpose());
+			pt.setTripId(t.getTripId());
+			p.addTrajectory(pt);
+		}
+		File traj = tempFile("traj-9col");
+		PersonAccessor.writeTrajectory(traj.getAbsolutePath(), loaded);
+		List<String[]> rows = readRows(traj);
+		assertEquals(Long.toString(7L * 1000 + 1), rows.get(0)[9]);
+		assertEquals(Long.toString(7L * 1000 + 2), rows.get(1)[9]);
+
+		File trips = tempFile("trip-9col-out");
+		PersonAccessor.writeTrips(trips.getAbsolutePath(), loaded);
+		assertEquals(2, readRows(trips).size(), "legacy rows stay separate trips");
+	}
+
+	@Test
+	public void trajectoryWritesZeroWhenThePointsTripCannotBeIdentified() throws Exception {
+		Person p = person(PID_A);
+		p.addTrip(leg(ETransport.CAR, EPurpose.OFFICE, 28000, 28600,
+				139.74, 35.68, 139.77, 35.70, 0, 0, ETransport.CAR));
+		p.addTrip(leg(ETransport.CAR, EPurpose.HOME, 61200, 61800,
+				139.77, 35.70, 139.74, 35.68, 0, 0, ETransport.CAR));
+		p.addTrajectory(new SPoint(139.74, 35.68, new Date(28000_000L), ETransport.CAR, EPurpose.OFFICE));
+		p.addTrajectory(new SPoint(139.77, 35.70, new Date(61200_000L), ETransport.CAR, EPurpose.HOME));
+
+		File f = tempFile("traj-unknown");
+		PersonAccessor.writeTrajectory(f.getAbsolutePath(), Arrays.asList(p));
+		List<String[]> rows = readRows(f);
+		assertEquals("0", rows.get(0)[9], "two trips share generator id 0: do not guess");
+		assertEquals("0", rows.get(1)[9], "two trips share generator id 0: do not guess");
+	}
+
+	@Test
+	public void tooManyTripsLeavesTheFileUntouched() throws Exception {
+		Person ok = person(PID_B);
+		ok.addTrip(leg(ETransport.WALK, EPurpose.HOME, 3600, 3700,
+				139.74, 35.68, 139.75, 35.68, 1, 0, ETransport.WALK));
+		Person big = person(PID_A);
+		for (int i = 1; i <= 1000; i++) {
+			big.addTrip(leg(ETransport.WALK, EPurpose.FREE, i * 10L, i * 10L + 5,
+					139.74, 35.68, 139.75, 35.68, i, 0, ETransport.WALK));
+		}
+		File f = writeLines("trip-untouched", "sentinel");
+		assertThrows(IllegalStateException.class,
+				() -> PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(ok, big)));
+		List<String[]> rows = readRows(f);
+		assertEquals(1, rows.size(), "no partial batch written");
+		assertEquals("sentinel", rows.get(0)[0]);
+	}
+
+	@Test
+	public void nineHundredNinetyNineTripsFit() throws Exception {
+		Person p = person(PID_A);
+		for (int i = 1; i <= 999; i++) {
+			p.addTrip(leg(ETransport.WALK, EPurpose.FREE, i * 10L, i * 10L + 5,
+					139.74, 35.68, 139.75, 35.68, i, 0, ETransport.WALK));
+		}
+		File f = tempFile("trip-999");
+		PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p));
+		List<String[]> rows = readRows(f);
+		assertEquals(999, rows.size());
+		assertEquals(Long.toString(PID_A * 1000 + 999), rows.get(998)[9]);
+	}
+
+	@Test
+	public void legacyMixLegIsWrittenAsTrain() throws Exception {
+		Person p = person(PID_A);
+		Trip t = new Trip(ETransport.MIX, EPurpose.OFFICE, 28000,
+				new LonLat(139.74, 35.68), new LonLat(139.77, 35.70)); // repMode defaults to MIX
+		t.setArrTime(28800);
+		p.addTrip(t);
+
+		File f = tempFile("trip-mix");
+		PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p));
+		assertEquals(Integer.toString(ETransport.TRAIN.getId()), readRows(f).get(0)[6]);
 	}
 }

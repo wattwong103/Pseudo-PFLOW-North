@@ -38,6 +38,8 @@ public class PersonAccessor{
 	private static final long DAY_SECONDS = 86400L;
 	private static final long TRIP_SEQ_MODULUS = 1000L;
 	private static final int MAX_TRIPS_PER_PERSON = 999;
+	/** trip_id written on a trajectory point whose trip cannot be identified. */
+	private static final long UNKNOWN_TRIP_ID = 0L;
 	private static final double STAY_HOME_COORD_EPS = 1e-8;
 
 	
@@ -245,11 +247,10 @@ public class PersonAccessor{
 			if (mode == null || mode == ETransport.MIX) {
 				mode = ETransport.NOT_DEFINED;
 				for (Trip t : g) {
-					mode = Trip.computeRepMode(mode, t.getTransport());
+					// computeRepMode ranks MIX below WALK, so a MIX leg is counted as the rail it stands for
+					ETransport legMode = t.getTransport() == ETransport.MIX ? ETransport.TRAIN : t.getTransport();
+					mode = Trip.computeRepMode(mode, legMode);
 				}
-			}
-			if (mode == ETransport.MIX) {
-				mode = ETransport.TRAIN;
 			}
 
 			long arr = last.getArrTime();
@@ -278,10 +279,15 @@ public class PersonAccessor{
 	}
 
 	public static void writeTrips(String filename, List<Person> data, boolean append) {
+		// Collapse the whole batch before opening the file: a person over the trip ceiling
+		// throws here and leaves the file as it was, instead of a half-written batch.
+		List<List<CollapsedTrip>> batch = new ArrayList<>(data.size());
+		for (Person p : data) {
+			batch.add(collapseTrips(p));
+		}
 		boolean warnedArr = false;
 		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename, append));){
-			for (Person p : data) {
-				List<CollapsedTrip> collapsed = collapseTrips(p);
+			for (List<CollapsedTrip> collapsed : batch) {
 				for (CollapsedTrip trip : collapsed) {
 					if (trip.arrTimeFallback && !warnedArr) {
 						System.err.println("PersonAccessor.writeTrips: arrTime missing on moving trips; using depTime (zero travel). " + filename);
@@ -305,20 +311,25 @@ public class PersonAccessor{
 					bw.newLine();
 				}
 			}
-		} catch (IllegalStateException e) {
-			throw e;
 		} catch (Exception e) {
 			throw new RuntimeException("Failed to write trips: " + filename, e);
 		}
 	}
 
 
+	/**
+	 * Read a trip CSV: v3.3 rows (12 columns, ..., trip_id, arr_time, duration) or legacy 9-column rows.
+	 * A legacy row is one trip and gets {@code trip_id = person_id * 1000 + seq} in file order, so a
+	 * trajectory made from it can name its trip. v3.2 subtrip rows (12 columns ending trip_id,
+	 * subtrip_id, rep_mode) are refused: their 11th column is not an arrival time.
+	 */
 	public static List<Person> loadTrips(String filename) {
 		List<Person> res = new ArrayList<>();
 		try (BufferedReader br = new BufferedReader(new FileReader(filename));){
             String line = null;
             Person person = null;
             long preId = 0;
+            int legacySeq = 0;
             while ((line = br.readLine()) != null) {
             	String[] items = line.split(",");
             	if (items.length < 9) {
@@ -340,14 +351,24 @@ public class PersonAccessor{
             	if (person == null || nextId != preId) {
             		person = new Person(null, nextId, 0, EGender.MALE, labor);
             		res.add(person);
+            		legacySeq = 0;
             	}
 
             	Trip trip = new Trip(mode, purpose, depTime, new LonLat(lon1,lat1), new LonLat(lon2,lat2));
             	if (items.length >= 12) {
-            		trip.setTripId(Long.parseLong(items[9]));
+            		long tripId = Long.parseLong(items[9]);
+            		if (tripId / TRIP_SEQ_MODULUS != nextId || tripId % TRIP_SEQ_MODULUS == 0) {
+            			throw new IllegalArgumentException("person " + nextId + " has trip_id " + tripId
+            					+ ", not person_id*1000+seq: this looks like a v3.2 subtrip row (trip_id, subtrip_id,"
+            					+ " rep_mode), which loadTrips does not read; it reads v3.3 rows (trip_id, arr_time,"
+            					+ " duration) and 9-column rows");
+            		}
+            		trip.setTripId(tripId);
             		trip.setArrTime(Long.parseLong(items[10]));
             		trip.setSubtripId(0);
             		trip.setRepMode(mode);
+            	} else {
+            		trip.setTripId(encodeTripId(nextId, ++legacySeq));
             	}
             	person.addTrip(trip);
 
@@ -445,10 +466,19 @@ public class PersonAccessor{
 
 		try(BufferedWriter bw = new BufferedWriter(new FileWriter(filename, append));){
 			for (Person person : persons) {
+				// generator trip id -> written trip_id. An id shared by several written trips
+				// (legacy trips that were never given one, all 0) cannot name a trip: write 0.
 				Map<Long, Long> genToUid = new HashMap<>();
-				if (person.listTrips() != null && !person.listTrips().isEmpty()) {
+				boolean hasTrips = person.listTrips() != null && !person.listTrips().isEmpty();
+				if (hasTrips) {
+					Set<Long> shared = new HashSet<>();
 					for (CollapsedTrip c : collapseTrips(person)) {
-						genToUid.put(c.generatorTripId, c.tripId);
+						if (genToUid.put(c.generatorTripId, c.tripId) != null) {
+							shared.add(c.generatorTripId);
+						}
+					}
+					for (Long id : shared) {
+						genToUid.put(id, UNKNOWN_TRIP_ID);
 					}
 				}
 				List<SPoint> points = person.getTrajectory();
@@ -458,7 +488,8 @@ public class PersonAccessor{
 						String link = p.getLink();
 						long unixtime = p.getTimeStamp().getTime();
 						String date = sfd.format(unixtime);
-						long uid = genToUid.getOrDefault(p.getTripId(), p.getTripId());
+						// No trips loaded (re-writing a trajectory file): keep the id the point carries.
+						long uid = hasTrips ? genToUid.getOrDefault(p.getTripId(), UNKNOWN_TRIP_ID) : p.getTripId();
 
 						bw.write(
 								String.format("%d,%d,%s,%f,%f,%d,%d,%s,%s,%d",

@@ -3,11 +3,9 @@ package pseudo.pre;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +23,7 @@ import pseudo.res.GLonLat;
 import pseudo.res.HouseHold;
 import pseudo.res.Person;
 import util.PathResolver;
+import utils.ConfigLoader;
 import utils.Roulette;
 
 public class PersonGenerator{
@@ -214,17 +213,28 @@ public class PersonGenerator{
         }
 	}
 	
-	public static void main(String[] args) throws Exception {
-		// Load configuration from config.properties
-		InputStream inputStream = PersonGenerator.class.getClassLoader().getResourceAsStream("config.properties");
-		if (inputStream == null) {
-			throw new FileNotFoundException("config.properties file not found in the classpath");
-		}
-		Properties prop = new Properties();
-		prop.load(inputStream);
+	/**
+	 * The same config layers as the other generators (utils.ConfigLoader): config.properties,
+	 * then config.local.properties, then the file named by -Dconfig.file.
+	 */
+	static Properties loadConfig(ClassLoader classLoader) {
+		return ConfigLoader.fromClassLoader(classLoader, -1);
+	}
 
-		String root = PathResolver.resolve(prop.getProperty("legacy.stat.root"));
-		
+	/** legacy.stat.root with ${PFLOW_HOME} resolved: the census folder this run reads and writes. */
+	static String statRoot(Properties prop) {
+		String raw = prop.getProperty("legacy.stat.root");
+		if (raw == null || raw.trim().isEmpty()) {
+			throw new IllegalStateException("legacy.stat.root is not set in any config layer");
+		}
+		return PathResolver.resolve(raw.trim());
+	}
+
+	public static void main(String[] args) throws Exception {
+		Properties prop = loadConfig(PersonGenerator.class.getClassLoader());
+		String root = statRoot(prop);
+		System.out.println("PersonGenerator: legacy.stat.root = " + root + " (writes " + root + "person/agent/)");
+
 		// load data
 		String laborFile = String.format("%spre_labor_rate.csv", root);
 		laborAcs = new LaborAccessor(laborFile);

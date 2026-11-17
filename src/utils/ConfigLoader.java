@@ -23,8 +23,15 @@ public class ConfigLoader {
 	}
 
 	public static Properties load(Class<?> caller, int prefCode) {
-		ClassLoader cl = caller != null ? caller.getClassLoader()
-				: ConfigLoader.class.getClassLoader();
+		return fromClassLoader(caller != null ? caller.getClassLoader()
+				: ConfigLoader.class.getClassLoader(), prefCode);
+	}
+
+	/** Same layers, read from the given class loader (tests pass one that sees only a temp folder). */
+	public static Properties fromClassLoader(ClassLoader cl, int prefCode) {
+		if (cl == null) {
+			throw new IllegalArgumentException("class loader is null");
+		}
 		Properties prop = new Properties();
 
 		// Layer 1: base defaults

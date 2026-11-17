@@ -13,6 +13,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import jp.ac.ut.csis.pflow.geom2.DistanceUtils;
 import jp.ac.ut.csis.pflow.routing4.logic.Dijkstra;
@@ -37,6 +39,9 @@ import utils.ConfigLoader;
 import utils.Roulette;
 
 public class TripGenerator {
+
+	/** An activity file name: any prefix, then _<5-digit city code>.csv (ActivityGenerator writes person_<city>.csv). */
+	private static final Pattern CITY_FILE = Pattern.compile(".*_(\\d{5})\\.csv");
 
 	private ModeAccessor modeAcs;
 	private Country japan;
@@ -288,6 +293,21 @@ public class TripGenerator {
 	}
 	
 
+	/**
+	 * The trip file for an activity file: {@code person_13101.csv} (what ActivityGenerator writes)
+	 * and {@code activity_13101.csv} both give {@code trip_13101.csv}.
+	 *
+	 * @throws IllegalArgumentException when the name does not end in {@code _<5-digit city code>.csv}
+	 */
+	static String tripFileName(String activityFileName) {
+		Matcher m = CITY_FILE.matcher(activityFileName);
+		if (!m.matches()) {
+			throw new IllegalArgumentException("activity file " + activityFileName
+					+ " does not end in _<5-digit city code>.csv, so its trip file cannot be named");
+		}
+		return "trip_" + m.group(1) + ".csv";
+	}
+
 	public static void main(String[] args) throws IOException {
 		
 		System.out.println("TripGenerator: start");
@@ -338,11 +358,12 @@ public class TripGenerator {
 				continue;
 			}
 			for(File file: actFiles){
-				if (file.getName().contains(".csv")) {
+				if (file.getName().endsWith(".csv")) {
+					String tripName = tripFileName(file.getName()); // before the work: a bad name stops the run
 					List<Person> agents = PersonAccessor.loadActivity(file.getAbsolutePath(), mfactor, 0.4, 0.4);
 					System.out.println(String.format("%s", file.getName()));
 					worker.generate(agents);
-					PersonAccessor.writeTrips(new File(outputDir+ i + "/trip_"+ file.getName().substring(9,14) + ".csv").getAbsolutePath(), agents);
+					PersonAccessor.writeTrips(new File(prefDir, tripName).getAbsolutePath(), agents);
 				}
 			}
 		}

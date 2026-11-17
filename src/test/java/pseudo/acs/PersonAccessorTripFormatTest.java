@@ -373,4 +373,18 @@ public class PersonAccessorTripFormatTest {
 				"1,61200,139.8,35.7,139.7,35.6,4" + t + ",1003,63000,25200");
 		assertThrows(RuntimeException.class, () -> PersonAccessor.loadTrips(f.getAbsolutePath()));
 	}
+
+	@Test
+	public void loadTripsReadsATripThatDepartsBeforeMidnight() throws Exception {
+		// TASK-20: run_20261117_221700_chiyoda, person 38899, 13101 to 10202 by car for an activity at 03:45,
+		// departs at -4036 s (22:52 the evening before); the last trip lasts 86400 - (-4036) = 90436 s.
+		File f = writeLines("trip-negative-dep",
+				"38899,-4036,139.741256,35.692294,139.001886,36.332661,3" + tail(EPurpose.OFFICE) + ",38899001,13500,90436");
+		List<Person> loaded = PersonAccessor.loadTrips(f.getAbsolutePath());
+		assertEquals(1, loaded.size());
+		Trip t = loaded.get(0).listTrips().get(0);
+		assertEquals(-4036L, t.getDepTime());
+		assertEquals(13500L, t.getArrTime());
+		assertEquals(38899001L, t.getTripId());
+	}
 }

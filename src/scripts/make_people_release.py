@@ -43,8 +43,9 @@ FORMAT
     pid_coverage  every pid in a city's trip file is a person_id in that city's person file
     row_semantics column count cannot tell the two 12-column layouts apart, so each row is
                   checked against its label: v3_12col needs subtrip_id in 0-9 and rep_mode a
-                  transport code 0-7; v3_3_12col needs digit-only dep_time, trip_id, arr_time
-                  and duration, trip_id = pid * 1000 + seq (seq 1-999) unique in its file, and
+                  transport code 0-7; v3_3_12col needs digit-only pid, trip_id and duration and
+                  integer dep_time and arr_time (a trip may depart before midnight, e.g. -4036),
+                  trip_id = pid * 1000 + seq (seq 1-999) unique in its file, and
                   arr_time >= dep_time (a v3.2 subtrip_id read as arr_time fails this).
                   Recorded "n/a" for v2_9col (no content rule).
   The caller supplies REQUIRED_META (plus optional "anomalies", "updates"); the tool
@@ -96,6 +97,7 @@ COMPUTED_META = ("date", "lane", "location", "columns", "totals", "gates")
 NAME_RE = re.compile(r"v\d+\.\d+(-[a-z]+)?-\d{8}-[a-z0-9]+-s\d{1,3}")
 CITY_RE = re.compile(r"\d{5}")
 DIGITS_RE = re.compile(r"[0-9]+")
+SIGNED_DIGITS_RE = re.compile(r"-?[0-9]+")
 MANIFEST = "MANIFEST.sha256"
 SIDECAR = "release.json"
 OS_JUNK_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}  # compared lower-case
@@ -106,6 +108,9 @@ PERSON_PID_INDEX = PERSON_COLUMNS.index("person_id")
 TRIP_PID_INDEX = _TRIP_9.index("pid")
 TRIP_DEP_INDEX = _TRIP_9.index("starttime")
 TRIP_ID_INDEX = len(_TRIP_9)  # trip_id is the 10th column in both 12-column layouts
+# A trip may depart, and even arrive, before midnight: a long commute to an early activity departs at a
+# negative time (e.g. -4036 s = 22:52 the evening before). Release #1 holds 214 such rows (TASK-20).
+V33_SIGNED_FIELDS = frozenset({"dep_time", "arr_time"})
 V33_INT_FIELDS = (("pid", TRIP_PID_INDEX), ("dep_time", TRIP_DEP_INDEX), ("trip_id", TRIP_ID_INDEX),
                   ("arr_time", TRIP_ID_INDEX + 1), ("duration", TRIP_ID_INDEX + 2))
 
@@ -215,7 +220,10 @@ def _row_rule(semantics: str):
                 return last_trip_problem(prev) if prev else None
             # digits only: int() would also take "+1001", "1_001" and " 1001 ", which the generator never writes
             for name, index in V33_INT_FIELDS:
-                if not DIGITS_RE.fullmatch(row[index]):
+                if name in V33_SIGNED_FIELDS:
+                    if not SIGNED_DIGITS_RE.fullmatch(row[index]):
+                        return f"{name} {row[index]!r} is not a plain integer"
+                elif not DIGITS_RE.fullmatch(row[index]):
                     return f"{name} {row[index]!r} is not a plain non-negative integer"
             pid, dep, trip_id, arr, duration = (int(row[index]) for _, index in V33_INT_FIELDS)
             if trip_id // 1000 != pid or trip_id % 1000 == 0:

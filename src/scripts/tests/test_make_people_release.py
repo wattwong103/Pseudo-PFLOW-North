@@ -665,7 +665,7 @@ def test_v3_3_gate_refuses_malformed_times(tmp_path, col, value):
     rows = _v33_rows([1, 2])
     rows[2][col] = value
     _write_trips(t, "13101", rows)
-    with pytest.raises(ValueError, match=r"trip_13101.csv line 3: .* is not a plain non-negative integer"):
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 3: .* is not a plain (non-negative )?integer"):
         build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
     assert _no_release(tmp_path)
 
@@ -714,3 +714,47 @@ def test_v3_3_gate_refuses_a_duration_that_is_not_the_gap_to_the_next_departure(
     rows = _v33_rows([1, 2])
     rows[0][11] = 30000
     _refuse_v33(tmp_path, rows, r"line 2: the row before has duration 30000, not the gap 32400")
+
+
+# --- negative departures (TASK-20): a long commute to an early activity leaves before midnight ---------
+
+# The row run_20261117_221700_chiyoda refused (trip_13101.csv line 814, person 38899): 13101 to 10202 by car,
+# 4.9 h, for an activity at 03:45, so it departs at -4036 s (22:52 the evening before). Release #1 holds 214
+# such rows; the generator writes them, and validate_trip.py only warns.
+def test_v3_3_gate_accepts_a_negative_departure(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rows = [[1, -4036, 139.741256, 35.692294, 139.001886, 36.332661, 3, 2, 21, 1001, 13500, 90436]] + _v33_rows([2])
+    _write_trips(t, "13101", rows)
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["gates"]["row_semantics"] == "PASS"
+    assert verify_release(rel) == []
+
+
+def test_v3_3_gate_accepts_a_trip_that_departs_and_arrives_before_midnight(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rows = [[1, -900, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1001, -100, 87300]] + _v33_rows([2])
+    _write_trips(t, "13101", rows)
+    build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+
+
+@pytest.mark.parametrize("col, value", [(1, "+4036"), (1, "--4036"), (1, "-"), (10, "-13500.0")])
+def test_v3_3_gate_still_refuses_malformed_signed_times(tmp_path, col, value):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[0][col] = value
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: .* is not a plain integer"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+@pytest.mark.parametrize("col, name", [(0, "pid"), (9, "trip_id"), (11, "duration")])
+def test_v3_3_gate_still_refuses_a_sign_on_ids_and_duration(tmp_path, col, name):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[0][col] = "-" + str(rows[0][col])
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=rf"trip_13101.csv line 1: {name} '-\d+' is not a plain non-negative integer"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)

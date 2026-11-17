@@ -13,13 +13,20 @@ under `native/`.
 `bin/` holds the compiled `.class` tree. It is gitignored, regenerable, and
 required at runtime — every `run_audit_*` script expects it to be populated.
 
-## Audit pipeline (repo root)
+## Audit pipeline (workspace `scripts/`, outside this repo)
+
+The run scripts live in the PFLOW workspace folder `scripts/`, one level above this repo, not at the repo root.
 
 | Script | Purpose |
 |---|---|
-| `run_audit_pipeline.bat` | Full pipeline (Windows): compile → truck sim → taxi sim → trajectory → validation |
-| `run_audit_pipeline.sh` | Full pipeline (Unix) |
-| `run_audit_traj_only.bat` | Trajectory-generation phase only (re-uses prior trip CSVs) |
+| `scripts/run_audit_pipeline.bat` | Full pipeline (Windows): compile → truck sim → taxi sim → trajectory → validation |
+| `scripts/run_audit_pipeline.sh` | Full pipeline (Unix) |
+| `scripts/archive/run_audit_traj_only.bat` | Archived 2026-10-22, not a live script: trajectory phase only (re-used prior trip CSVs) |
+
+## Unit tests
+
+`mvn -o test` (JDK 21) runs every JUnit 5 suite under `src/test/java`.
+Three stale truck tests are excluded in `pom.xml` (`testExcludes`).
 
 Pipeline stage flow:
 

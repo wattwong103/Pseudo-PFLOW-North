@@ -9,7 +9,6 @@ out/
 *.class
 *.jar
 !lib/osmpbf-1.3.3.jar
-osmpbf-*.jar
 
 # ── Simulation data & outputs (local-only, regenerable) ─
 output/

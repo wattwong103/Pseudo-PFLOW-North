@@ -150,7 +150,7 @@
 					calibration runs keep their own build (run_taxi.bat puts the
 					GeoTools 20.1 jars on the classpath), so this changes no
 					simulation output. traj/ is built too (TASK-19): it uses only the
-					in-source routing library, pseudo.res and JTS, and building it is
+					in-source routing library, pseudo.res, util.PathResolver and JTS; building it is
 					what notices when that library moves (it moved to org.locationtech
 					in 98cd478 and traj did not follow). The traj runners keep their
 					own classpath (scripts/compile_traj.*, GeoTools 20.1 and

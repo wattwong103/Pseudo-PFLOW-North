@@ -153,7 +153,9 @@
 					in-source routing library, pseudo.res and JTS, and building it is
 					what notices when that library moves (it moved to org.locationtech
 					in 98cd478 and traj did not follow). The traj runners keep their
-					own classpath (scripts/compile_traj.*).
+					own classpath (scripts/compile_traj.*, GeoTools 20.1 and
+					jts-core 1.16), so a green Maven build here is a sync check,
+					not proof that the runner build links.
 					-->
 					<excludes>
 						<!-- archive/experimental/dcity/aggr stays in: taxi.sim imports dcity.aggr. -->

@@ -1,8 +1,8 @@
 package pseudo.acs;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -12,7 +12,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import jp.ac.ut.csis.pflow.geom2.LonLat;
 import pseudo.res.EGender;
@@ -79,7 +79,7 @@ public class PersonAccessorTripFormatTest {
 		PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p));
 		List<String[]> rows = readRows(f);
 
-		assertEquals("mixed legs must collapse to one CSV row", 1, rows.size());
+		assertEquals(1, rows.size(), "mixed legs must collapse to one CSV row");
 		String[] r = rows.get(0);
 		assertEquals(12, r.length);
 		assertEquals(Long.toString(PID_A), r[0]);
@@ -88,7 +88,7 @@ public class PersonAccessorTripFormatTest {
 		assertEquals(35.68, Double.parseDouble(r[3]), 1e-5);
 		assertEquals(139.77, Double.parseDouble(r[4]), 1e-5);
 		assertEquals(35.70, Double.parseDouble(r[5]), 1e-5);
-		assertEquals("representative mode is TRAIN", "4", r[6]);
+		assertEquals("4", r[6], "representative mode is TRAIN");
 		assertEquals(Integer.toString(EPurpose.OFFICE.getId()), r[7]);
 		assertEquals(Integer.toString(ELabor.WORKER.getId()), r[8]);
 		assertEquals(Long.toString(PID_A * 1000 + 1), r[9]);
@@ -141,7 +141,7 @@ public class PersonAccessorTripFormatTest {
 		File f = tempFile("trip-zero-ids");
 		PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p));
 		List<String[]> rows = readRows(f);
-		assertEquals("legacy 9-col rows with tripId=0 stay separate trips", 2, rows.size());
+		assertEquals(2, rows.size(), "legacy 9-col rows with tripId=0 stay separate trips");
 		assertEquals(Long.toString(PID_A * 1000 + 1), rows.get(0)[9]);
 		assertEquals(Long.toString(PID_A * 1000 + 2), rows.get(1)[9]);
 		assertEquals("33200", rows.get(0)[11]);
@@ -203,12 +203,10 @@ public class PersonAccessorTripFormatTest {
 					139.74, 35.68, 139.75, 35.68, i, 0, ETransport.WALK));
 		}
 		File f = tempFile("trip-too-many");
-		try {
-			PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p));
-			fail("expected IllegalStateException for seq >= 1000");
-		} catch (IllegalStateException e) {
-			assertTrue(e.getMessage().contains("1000") || e.getMessage().contains("seq"));
-		}
+		IllegalStateException e = assertThrows(IllegalStateException.class,
+				() -> PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p)),
+				"expected IllegalStateException for seq >= 1000");
+		assertTrue(e.getMessage().contains("1000") || e.getMessage().contains("seq"));
 	}
 
 	@Test
@@ -224,7 +222,7 @@ public class PersonAccessorTripFormatTest {
 		PersonAccessor.writeTrajectory(f.getAbsolutePath(), Arrays.asList(p));
 		List<String[]> rows = readRows(f);
 		assertEquals(1, rows.size());
-		assertTrue("trajectory row must append trip_id", rows.get(0).length >= 10);
+		assertTrue(rows.get(0).length >= 10, "trajectory row must append trip_id");
 		assertEquals(Long.toString(PID_A * 1000 + 1), rows.get(0)[9]);
 	}
 }

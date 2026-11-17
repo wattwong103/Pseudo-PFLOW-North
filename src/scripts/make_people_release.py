@@ -30,15 +30,20 @@ LAYOUT
 FORMAT
   All CSVs are headerless.
     person_<city>.csv  9 columns  PERSON_COLUMNS (person_id at index 5)
-    trip_<city>.csv    9 columns "v2_9col" or 12 columns "v3_12col" (pid at index 0);
-                       chosen by meta["row_semantics"]. "v3_12col" is the v3.2 layout
-                       (... trip_id, subtrip_id, rep_mode). The v3.3 12-column layout
-                       ends differently (trip_id, arr_time, duration); column count
-                       cannot tell them apart, so that layout has no key here yet.
+    trip_<city>.csv    9 columns "v2_9col", or 12 columns "v3_12col" or "v3_3_12col"
+                       (pid at index 0); chosen by meta["row_semantics"].
+                       "v3_12col" is the v3.2 subtrip layout (... trip_id, subtrip_id,
+                       rep_mode): one row per leg, a mixed trip is 3 rows.
+                       "v3_3_12col" is the v3.3 layout (... trip_id, arr_time, duration):
+                       one row per logical trip, trip_id = pid * 1000 + seq (seq 1-999).
   Source size and mtime are re-checked after the last copy; a file that changed aborts the release.
   Gates, checked on the copied files; any failure aborts and leaves no release:
     columns       every non-empty row has the expected number of fields
     pid_coverage  every pid in a city's trip file is a person_id in that city's person file
+    row_semantics column count cannot tell the two 12-column layouts apart, so each row is
+                  checked against its label: v3_12col needs subtrip_id in 0-2 and rep_mode a
+                  transport code 0-7; v3_3_12col needs trip_id = pid * 1000 + seq (seq 1-999),
+                  unique in its file. Recorded "n/a" for v2_9col (no content rule).
   The caller supplies REQUIRED_META (plus optional "anomalies", "updates"); the tool
   computes date, lane, location, columns, totals and gates. Pure stdlib.
   totals = person_files, trip_files, persons, trip_persons, trips. persons is the sum over
@@ -74,7 +79,11 @@ PERSON_COLUMNS = ["household_id", "family_type", "gcode", "home_lon", "home_lat"
                   "person_id", "age", "gender_id", "labor_id"]
 _TRIP_9 = ["pid", "starttime", "slon", "slat", "elon", "elat",
            "mode_code", "activity_type", "occupation"]
-TRIP_COLUMNS = {"v2_9col": _TRIP_9, "v3_12col": _TRIP_9 + ["trip_id", "subtrip_id", "rep_mode"]}
+TRIP_COLUMNS = {"v2_9col": _TRIP_9,
+                "v3_12col": _TRIP_9 + ["trip_id", "subtrip_id", "rep_mode"],
+                "v3_3_12col": _TRIP_9 + ["trip_id", "arr_time", "duration"]}
+SUBTRIP_IDS = {"0", "1", "2"}            # access, main, egress leg of a v3.2 mixed trip
+MODE_CODES = {str(i) for i in range(8)}  # pseudo.res.ETransport ids 0-7
 
 REQUIRED_META = ("era", "area", "sample_pct", "row_semantics", "generating_code",
                  "entry_points", "run_window", "host", "produced_by")
@@ -90,6 +99,7 @@ RENAME_ATTEMPTS = 5
 RENAME_BACKOFF_S = 0.5  # doubles after each failed attempt
 PERSON_PID_INDEX = PERSON_COLUMNS.index("person_id")
 TRIP_PID_INDEX = _TRIP_9.index("pid")
+TRIP_ID_INDEX = len(_TRIP_9)  # trip_id is the 10th column in both 12-column layouts
 
 
 def validate_name(name: str) -> None:
@@ -156,8 +166,45 @@ def _discover(directory: Path, kind: str) -> dict:
     return found
 
 
-def _scan(path: Path, expected: int, pid_index: int, expect_label: str):
-    """Return (data rows, set of pids). Every non-empty row must have `expected` fields."""
+def _row_rule(semantics: str):
+    """A fresh per-file row check for a trip layout, or None when the layout has no content rule.
+
+    The check takes one row (already the right length) and returns a problem string or None.
+    """
+    def problem(text):
+        return f"{text}; these are not {semantics} rows"
+
+    if semantics == "v3_12col":
+        def check(row):
+            subtrip_id, rep_mode = row[TRIP_ID_INDEX + 1], row[TRIP_ID_INDEX + 2]
+            if subtrip_id not in SUBTRIP_IDS:
+                return problem(f"subtrip_id {subtrip_id!r} is not 0, 1 or 2")
+            if rep_mode not in MODE_CODES:
+                return problem(f"rep_mode {rep_mode!r} is not a transport code 0-7")
+            return None
+        return check
+    if semantics == "v3_3_12col":
+        seen = set()
+
+        def check(row):
+            try:
+                pid, trip_id = int(row[TRIP_PID_INDEX]), int(row[TRIP_ID_INDEX])
+            except ValueError:
+                return problem(f"trip_id {row[TRIP_ID_INDEX]!r} is not an integer "
+                               f"(pid {row[TRIP_PID_INDEX]!r})")
+            if trip_id // 1000 != pid or trip_id % 1000 == 0:
+                return problem(f"trip_id {trip_id} is not person_id {pid} x 1000 + seq (seq 1-999)")
+            if trip_id in seen:
+                return problem(f"duplicate trip_id {trip_id}")
+            seen.add(trip_id)
+            return None
+        return check
+    return None
+
+
+def _scan(path: Path, expected: int, pid_index: int, expect_label: str, row_rule=None):
+    """Return (data rows, set of pids). Every non-empty row must have `expected` fields
+    and, when a row_rule is given, pass it."""
     rows, pids = 0, set()
     with path.open("r", encoding="utf-8", newline="") as fh:
         for lineno, row in enumerate(csv.reader(fh), 1):
@@ -166,6 +213,10 @@ def _scan(path: Path, expected: int, pid_index: int, expect_label: str):
             if len(row) != expected:
                 where = "" if rows == 0 else f" (line {lineno})"
                 raise ValueError(f"{path.name} has {len(row)} columns, {expect_label} {expected}{where}")
+            if row_rule is not None:
+                problem = row_rule(row)
+                if problem:
+                    raise ValueError(f"{path.name} line {lineno}: {problem}")
             rows += 1
             pids.add(row[pid_index])
     if rows == 0:
@@ -264,7 +315,8 @@ def _check_copies(partial: Path, person_files: dict, trip_files: dict, semantics
         _, person_ids = _scan(partial / "person" / city[:2] / person_files[city].name,
                               len(PERSON_COLUMNS), PERSON_PID_INDEX, "expected")
         n_trips, trip_pids = _scan(partial / "trip" / city[:2] / trip_files[city].name,
-                                   len(TRIP_COLUMNS[semantics]), TRIP_PID_INDEX, f"{semantics} expects")
+                                   len(TRIP_COLUMNS[semantics]), TRIP_PID_INDEX, f"{semantics} expects",
+                                   _row_rule(semantics))
         unknown = trip_pids - person_ids
         if unknown:
             raise ValueError(f"{city}: {len(unknown)} trip pid(s) not in {person_files[city].name}, "
@@ -291,7 +343,8 @@ def _sidecar(location: str, meta: dict, n_person_files: int, n_trip_files: int,
         "columns": {"person": PERSON_COLUMNS, "trip": TRIP_COLUMNS[meta["row_semantics"]]},
         "totals": {"person_files": n_person_files, "trip_files": n_trip_files,
                    "persons": persons, "trip_persons": trip_persons, "trips": trips},
-        "gates": {"columns": "PASS", "pid_coverage": "PASS"},
+        "gates": {"columns": "PASS", "pid_coverage": "PASS",
+                  "row_semantics": "n/a" if _row_rule(meta["row_semantics"]) is None else "PASS"},
     }
     if "anomalies" in meta:
         sidecar["anomalies"] = meta["anomalies"]

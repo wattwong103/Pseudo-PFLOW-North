@@ -520,3 +520,114 @@ def test_cli_refuses_unhashable_meta_values(tmp_path, capsys, change):
                "--name", NAME, "--meta", str(meta_path)])
     assert rc == 1 and "refused" in capsys.readouterr().err
     assert _no_release(tmp_path)
+
+
+# --- row_semantics content gate (TASK-15): column count cannot tell v3_12col from v3_3_12col ---
+
+def _write_trips(trip_dir, city, rows):
+    (trip_dir / f"trip_{city}.csv").write_text(
+        "".join(",".join(map(str, r)) + "\n" for r in rows), encoding="utf-8")
+
+
+def _v33_rows(pids):
+    """v3.3 rows: 9 contract columns + trip_id (pid*1000+seq), arr_time, duration."""
+    rows = []
+    for pid in pids:
+        rows.append([pid, 28800, 139.7, 35.6, 139.8, 35.7, 4, 2, 21, pid * 1000 + 1, 30600, 32400])
+        rows.append([pid, 61200, 139.8, 35.7, 139.7, 35.6, 4, 1, 21, pid * 1000 + 2, 63000, 25200])
+    return rows
+
+
+def _v33_run(tmp_path):
+    p, t = make_run(tmp_path, trip_cols=12)
+    _write_trips(t, "13101", _v33_rows([1, 2]))
+    _write_trips(t, "13102", _v33_rows([3]))
+    return p, t
+
+
+def _v33_meta():
+    return {**july_meta(), "row_semantics": "v3_3_12col"}
+
+
+def test_v3_3_12col_columns_end_with_trip_id_arr_time_duration():
+    assert TRIP_COLUMNS["v3_3_12col"][:9] == TRIP_COLUMNS["v2_9col"]
+    assert TRIP_COLUMNS["v3_3_12col"][9:] == ["trip_id", "arr_time", "duration"]
+
+
+def test_builds_v3_3_12col_release(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["row_semantics"] == "v3_3_12col"
+    assert side["columns"]["trip"] == TRIP_COLUMNS["v3_3_12col"]
+    assert side["totals"]["trips"] == 6 and side["gates"]["row_semantics"] == "PASS"
+    assert verify_release(rel) == []
+
+
+def test_v3_12col_release_records_row_semantics_gate(tmp_path):
+    p, t = make_run(tmp_path, trip_cols=12)
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["gates"]["row_semantics"] == "PASS"
+
+
+def test_v2_9col_release_has_no_row_content_rule(tmp_path):
+    p, t = make_run(tmp_path)
+    rel = build_release(p, t, tmp_path / "releases", NAME, july_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["gates"]["row_semantics"] == "n/a"
+
+
+def test_refuses_v3_3_rows_labelled_v3_12col(tmp_path):
+    p, t = _v33_run(tmp_path)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: subtrip_id '30600' is not 0, 1 or 2"):
+        build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    assert _no_release(tmp_path)
+
+
+def test_refuses_v3_12col_rows_labelled_v3_3_12col(tmp_path):
+    p, t = make_run(tmp_path, trip_cols=12)  # trip_id 1, subtrip_id 1, rep_mode 1
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: trip_id 1 is not person_id 1 x 1000 \+ seq"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+@pytest.mark.parametrize("bad, match", [
+    ({10: 3}, r"subtrip_id '3' is not 0, 1 or 2"),
+    ({11: 8}, r"rep_mode '8' is not a transport code 0-7"),
+    ({11: 86400}, r"rep_mode '86400' is not a transport code 0-7"),
+])
+def test_v3_12col_gate_checks_subtrip_and_rep_mode(tmp_path, bad, match):
+    p, t = make_run(tmp_path, trip_cols=12)
+    row = [1, 28800, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1, 0, 1]
+    for i, v in bad.items():
+        row[i] = v
+    _write_trips(t, "13101", [[1, 28800, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1, 0, 1], row])
+    with pytest.raises(ValueError, match="line 2: " + match):
+        build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    assert _no_release(tmp_path)
+
+
+@pytest.mark.parametrize("trip_id, match", [
+    (2000, r"trip_id 2000 is not person_id 2 x 1000 \+ seq"),   # seq 0
+    (3001, r"trip_id 3001 is not person_id 2 x 1000 \+ seq"),   # another person's id
+    ("2x01", r"trip_id '2x01' is not an integer"),
+])
+def test_v3_3_gate_checks_trip_id_encoding(tmp_path, trip_id, match):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[3][9] = trip_id  # person 2, second trip
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match="trip_13101.csv line 4: " + match):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+def test_v3_3_gate_refuses_duplicate_trip_id(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[1][9] = rows[0][9]
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 2: duplicate trip_id 1001"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)

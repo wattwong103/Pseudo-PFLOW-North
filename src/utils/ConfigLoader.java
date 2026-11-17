@@ -29,6 +29,9 @@ public class ConfigLoader {
 
 	/** Same layers, read from the given class loader (tests pass one that sees only a temp folder). */
 	public static Properties fromClassLoader(ClassLoader cl, int prefCode) {
+		if (cl == null) {
+			throw new IllegalArgumentException("class loader is null");
+		}
 		Properties prop = new Properties();
 
 		// Layer 1: base defaults

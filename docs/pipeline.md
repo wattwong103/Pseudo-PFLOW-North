@@ -39,8 +39,9 @@ treated as LOCAL-ONLY. See [`config-schema.md`](config-schema.md) for the
 
 ## Maven (`pom.xml`)
 
-`pom.xml` is **not** the build system. It exists for dependency resolution
-only:
+`pom.xml` is not the build system for simulation runs: those are compiled and run by the
+`native/build_*` and workspace scripts. Maven resolves dependencies, compiles `src/` into
+`target/classes` and runs the unit tests (below). Dependency resolution:
 
 ```bash
 mvn dependency:resolve

@@ -9,6 +9,7 @@ public class SPoint extends LonLatTime{
 	private ETransport mode;
 	private EPurpose purpose;
 	private String link;
+	private long tripId;
 
 	public SPoint(double lon, double lat, Date timeStamp, ETransport mode, EPurpose purpose) {
 		super(lon, lat, timeStamp);
@@ -31,5 +32,13 @@ public class SPoint extends LonLatTime{
 	
 	public EPurpose getPurpose() {
 		return this.purpose;
+	}
+
+	public long getTripId() {
+		return tripId;
+	}
+
+	public void setTripId(long tripId) {
+		this.tripId = tripId;
 	}
 }

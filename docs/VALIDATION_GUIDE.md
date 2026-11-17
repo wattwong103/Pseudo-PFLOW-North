@@ -70,7 +70,7 @@ Stats reported: row_count, num_persons, avg/max activities per person, purpose d
 
 ### Trip (`validate_trip.py`)
 
-CSV columns (no header): person_id, dep_time, origin_lon, origin_lat, dest_lon, dest_lat, transport_id, purpose_id, labor_id.
+CSV columns (no header, v3.3): person_id, dep_time, origin_lon, origin_lat, dest_lon, dest_lat, transport_id (representative mode), purpose_id, labor_id, trip_id, arr_time, duration. One row per logical trip.
 
 | Check | WARN | FAIL |
 |-------|------|------|
@@ -82,13 +82,16 @@ CSV columns (no header): person_id, dep_time, origin_lon, origin_lat, dest_lon, 
 | Single mode > 95% of real-movement trips | Yes | — |
 | Trips exceeding 2000 km | Any | — |
 | dep_time out of range (0..172800) | Any | — |
+| MIX (6) remaining as mode | — | Any |
+| Duplicate trip_id | — | Any |
+| arr_time < dep_time or negative duration | — | Any |
 | Non-monotonic dep_time per person (> 20%) | Yes | — |
 
 Stats reported: row_count, num_persons, mode_share (count + pct per mode), not_defined breakdown, real_movement_mode_share, distance median/p95, person coverage vs activity (when cross-referenced).
 
 ### Trajectory (`validate_trajectory.py`)
 
-CSV columns (no header): person_id, unix_time_ms, datetime_str, lon, lat, transport_id, purpose_id, labor_str, link_id.
+CSV columns (no header): person_id, unix_time_ms, datetime_str, lon, lat, transport_id, purpose_id, labor_str, link_id, trip_id (v3.3).
 
 | Check | WARN | FAIL |
 |-------|------|------|

@@ -144,6 +144,7 @@ public class TrajectoryGenerator {
 					
 					SPoint point = new SPoint(node.getLon(), node.getLat()
 							, date, trip.getTransport(), trip.getPurpose());
+					point.setTripId(trip.getTripId());
 					subpoints.add(point);	
 				}
 					

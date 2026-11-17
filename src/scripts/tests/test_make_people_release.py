@@ -520,3 +520,197 @@ def test_cli_refuses_unhashable_meta_values(tmp_path, capsys, change):
                "--name", NAME, "--meta", str(meta_path)])
     assert rc == 1 and "refused" in capsys.readouterr().err
     assert _no_release(tmp_path)
+
+
+# --- row_semantics content gate (TASK-15): column count cannot tell v3_12col from v3_3_12col ---
+
+def _write_trips(trip_dir, city, rows):
+    (trip_dir / f"trip_{city}.csv").write_text(
+        "".join(",".join(map(str, r)) + "\n" for r in rows), encoding="utf-8")
+
+
+def _v33_rows(pids):
+    """v3.3 rows: 9 contract columns + trip_id (pid*1000+seq), arr_time, duration."""
+    rows = []
+    for pid in pids:
+        rows.append([pid, 28800, 139.7, 35.6, 139.8, 35.7, 4, 2, 21, pid * 1000 + 1, 30600, 32400])
+        rows.append([pid, 61200, 139.8, 35.7, 139.7, 35.6, 4, 1, 21, pid * 1000 + 2, 63000, 25200])
+    return rows
+
+
+def _v33_run(tmp_path):
+    p, t = make_run(tmp_path, trip_cols=12)
+    _write_trips(t, "13101", _v33_rows([1, 2]))
+    _write_trips(t, "13102", _v33_rows([3]))
+    return p, t
+
+
+def _v33_meta():
+    return {**july_meta(), "row_semantics": "v3_3_12col"}
+
+
+def test_v3_3_12col_columns_end_with_trip_id_arr_time_duration():
+    assert TRIP_COLUMNS["v3_3_12col"][:9] == TRIP_COLUMNS["v2_9col"]
+    assert TRIP_COLUMNS["v3_3_12col"][9:] == ["trip_id", "arr_time", "duration"]
+
+
+def test_builds_v3_3_12col_release(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["row_semantics"] == "v3_3_12col"
+    assert side["columns"]["trip"] == TRIP_COLUMNS["v3_3_12col"]
+    assert side["totals"]["trips"] == 6 and side["gates"]["row_semantics"] == "PASS"
+    assert verify_release(rel) == []
+
+
+def test_v3_12col_release_records_row_semantics_gate(tmp_path):
+    p, t = make_run(tmp_path, trip_cols=12)
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["gates"]["row_semantics"] == "PASS"
+
+
+def test_v2_9col_release_has_no_row_content_rule(tmp_path):
+    p, t = make_run(tmp_path)
+    rel = build_release(p, t, tmp_path / "releases", NAME, july_meta())
+    side = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    assert side["gates"]["row_semantics"] == "n/a"
+
+
+def test_refuses_v3_3_rows_labelled_v3_12col(tmp_path):
+    p, t = _v33_run(tmp_path)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: subtrip_id '30600' is not a leg index 0-9"):
+        build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    assert _no_release(tmp_path)
+
+
+def test_refuses_v3_12col_rows_labelled_v3_3_12col(tmp_path):
+    p, t = make_run(tmp_path, trip_cols=12)  # trip_id 1, subtrip_id 1, rep_mode 1
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: trip_id 1 is not person_id 1 x 1000 \+ seq"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+@pytest.mark.parametrize("bad, match", [
+    ({10: 10}, r"subtrip_id '10' is not a leg index 0-9"),
+    ({11: 8}, r"rep_mode '8' is not a transport code 0-7"),
+    ({11: 86400}, r"rep_mode '86400' is not a transport code 0-7"),
+])
+def test_v3_12col_gate_checks_subtrip_and_rep_mode(tmp_path, bad, match):
+    p, t = make_run(tmp_path, trip_cols=12)
+    row = [1, 28800, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1, 0, 1]
+    for i, v in bad.items():
+        row[i] = v
+    _write_trips(t, "13101", [[1, 28800, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1, 0, 1], row])
+    with pytest.raises(ValueError, match="line 2: " + match):
+        build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    assert _no_release(tmp_path)
+
+
+@pytest.mark.parametrize("trip_id, match", [
+    (2000, r"trip_id 2000 is not person_id 2 x 1000 \+ seq"),   # seq 0
+    (3001, r"trip_id 3001 is not person_id 2 x 1000 \+ seq"),   # another person's id
+    ("2x01", r"trip_id '2x01' is not a plain non-negative integer"),
+    ("+2001", r"trip_id '\+2001' is not a plain non-negative integer"),
+    ("2_001", r"trip_id '2_001' is not a plain non-negative integer"),
+    (" 2001", r"trip_id ' 2001' is not a plain non-negative integer"),
+    ("2001.0", r"trip_id '2001.0' is not a plain non-negative integer"),
+])
+def test_v3_3_gate_checks_trip_id_encoding(tmp_path, trip_id, match):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[3][9] = trip_id  # person 2, second trip
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match="trip_13101.csv line 4: " + match):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+def test_v3_3_gate_refuses_duplicate_trip_id(tmp_path):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[1][9] = rows[0][9]
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 2: duplicate trip_id 1001") as err:
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert "not v3_3_12col rows" not in str(err.value)  # the layout is right; only the id repeats
+    assert _no_release(tmp_path)
+
+
+def test_v3_12col_accepts_web_api_routes_with_five_legs(tmp_path):
+    # TripGenerator_WebAPI_refactor numbers every emitted leg: walk, bus, walk, train, walk = 0-4
+    p, t = make_run(tmp_path, trip_cols=12)
+    legs = [[1, 28800 + 60 * s, 139.7, 35.6, 139.8, 35.7, m, 2, 21, 1, s, 4] for s, m in enumerate([1, 5, 1, 4, 1])]
+    _write_trips(t, "13101", legs + [[2, 28800, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1, 0, 1]])
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    assert json.loads((rel / "release.json").read_text(encoding="utf-8"))["totals"]["trips"] == 7
+
+
+def test_v3_3_gate_refuses_a_v32_row_whose_trip_id_happens_to_fit(tmp_path):
+    # Codex review: a v3.2 row with trip_id 1001 for pid 1 fits pid*1000+seq; its subtrip_id 0
+    # read as arr_time is before the departure, which a v3.3 row never is.
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[0] = [1, 28800, 139.7, 35.6, 139.8, 35.7, 4, 2, 21, 1001, 0, 4]
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: arr_time 0 is before dep_time 28800"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+@pytest.mark.parametrize("col, value", [(10, "oops"), (11, "-1"), (1, "28800.0")])
+def test_v3_3_gate_refuses_malformed_times(tmp_path, col, value):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[2][col] = value
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 3: .* is not a plain non-negative integer"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+def test_v3_3_stay_home_row_passes(tmp_path):
+    p, t = _v33_run(tmp_path)
+    _write_trips(t, "13102", [[3, 0, 139.7, 35.6, 139.7, 35.6, 0, 1, 21, 3001, 0, 86400]])
+    build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+
+
+# --- per-person chain (Codex re-check): a single row cannot always be told apart, a person's rows can ---
+
+def _refuse_v33(tmp_path, rows_13101, match):
+    p, t = _v33_run(tmp_path)
+    _write_trips(t, "13101", rows_13101)
+    with pytest.raises(ValueError, match=match):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+def test_v3_3_gate_refuses_a_midnight_v32_row_that_fits_every_row_rule(tmp_path):
+    # pid 1, dep 0, trip_id 1001, subtrip_id 0 read as arr_time 0, rep_mode 0 read as duration 0
+    rows = [[1, 0, 139.7, 35.6, 139.7, 35.6, 0, 1, 21, 1001, 0, 0]] + _v33_rows([2])
+    _refuse_v33(tmp_path, rows, r"line 2: person 1's last trip \(seq 1\) has duration 0, not 86400")
+
+
+def test_v3_3_gate_checks_the_last_row_of_the_file(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[-1][11] = 25000
+    _refuse_v33(tmp_path, rows, r"trip_13101.csv at end of file: person 2's last trip \(seq 2\) has duration 25000, not 25200")
+
+
+def test_v3_3_gate_refuses_a_gap_in_a_persons_trip_numbers(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[1][9] = 1003
+    _refuse_v33(tmp_path, rows, r"line 2: trip_id 1003 follows seq 1")
+
+
+def test_v3_3_gate_refuses_a_first_trip_that_is_not_seq_1(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[2][9], rows[3][9] = 2002, 2003
+    _refuse_v33(tmp_path, rows, r"line 3: person 2's first trip has seq 2")
+
+
+def test_v3_3_gate_refuses_a_duration_that_is_not_the_gap_to_the_next_departure(tmp_path):
+    rows = _v33_rows([1, 2])
+    rows[0][11] = 30000
+    _refuse_v33(tmp_path, rows, r"line 2: the row before has duration 30000, not the gap 32400")

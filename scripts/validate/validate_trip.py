@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Validate trip CSV files produced by TripGenerator.
 
-Trip CSV columns (no header):
+Trip CSV columns (no header) — v3.3, one row per logical trip:
   0: person_id (int)
   1: dep_time (int, seconds from midnight)
   2: origin_lon (float)
   3: origin_lat (float)
   4: dest_lon (float)
   5: dest_lat (float)
-  6: transport_id (int: 0=NOT_DEFINED,1=WALK,2=BICYCLE,3=CAR,4=TRAIN,5=BUS,6=MIX,7=COMMUNITY)
+  6: transport_id (int: 0=NOT_DEFINED,1=WALK,2=BICYCLE,3=CAR,4=TRAIN,5=BUS,7=COMMUNITY)
+     Representative mode; MIX (6) must not appear.
   7: purpose_id (int)
   8: labor_id (int)
-  9: trip_id (int) [optional, 12-column format]
- 10: subtrip_id (int) [optional, 12-column format]
- 11: rep_mode (int) [optional, 12-column format]
+  9: trip_id (long) unique: person_id * 1000 + per-person seq
+ 10: arr_time (int, seconds from midnight)
+ 11: duration (int, seconds until next dep or 86400 - dep)
 """
 
 import csv
@@ -106,9 +107,15 @@ def validate_file(filepath, activity_person_ids=None):
     nd_placeholder = 0   # zero-distance: stay-at-home / return-to-same-location
     nd_unexpected = 0     # nonzero-distance: real movement with no mode
 
-    # Trip-level mode share via rep_mode (12-column format only)
+    # v3.3 12-column fields
     has_trip_ids = False
-    trip_rep_modes = {}  # (person_id, trip_id) -> rep_mode
+    trip_id_set = set()
+    dup_trip_ids = 0
+    mix_mode_rows = 0
+    bad_arr_times = 0
+    bad_durations = 0
+    arr_before_dep = 0
+    bad_v33_fields = 0
 
     for row in rows:
         try:
@@ -127,15 +134,26 @@ def validate_file(filepath, activity_person_ids=None):
         transport_counter[transport] += 1
         distances_km.append(dist)
 
-        # Parse optional 12-column fields
+        if transport == 6:
+            mix_mode_rows += 1
+
         if len(row) >= 12:
             try:
                 trip_id = int(row[9])
-                rep_mode = int(row[11])
+                arr_time = int(row[10])
+                duration = int(row[11])
                 has_trip_ids = True
-                trip_rep_modes[(pid, trip_id)] = rep_mode
+                if trip_id in trip_id_set:
+                    dup_trip_ids += 1
+                trip_id_set.add(trip_id)
+                if arr_time < 0 or arr_time > MAX_DEP_TIME:
+                    bad_arr_times += 1
+                if duration < 0:
+                    bad_durations += 1
+                if arr_time < dep_time:
+                    arr_before_dep += 1
             except (ValueError, IndexError):
-                pass
+                bad_v33_fields += 1
 
         if transport == 0:
             if dist < ZERO_DISTANCE_THRESHOLD_KM:
@@ -197,18 +215,11 @@ def validate_file(filepath, activity_person_ids=None):
         result["stats"]["distance_km_median"] = round(sorted_d[len(sorted_d) // 2], 2)
         result["stats"]["distance_km_p95"] = round(sorted_d[int(len(sorted_d) * 0.95)], 2)
 
-    # ── Trip-level mode share (from rep_mode, 12-column format only) ─────
-    if has_trip_ids and trip_rep_modes:
-        trip_mode_counter = Counter(trip_rep_modes.values())
-        num_trips = len(trip_rep_modes)
-        trip_mode_share = {}
-        for tid in sorted(trip_mode_counter.keys()):
-            name = TRANSPORT_NAMES.get(tid, str(tid))
-            count = trip_mode_counter[tid]
-            pct = count / num_trips * 100
-            trip_mode_share[name] = {"count": count, "pct": round(pct, 1)}
-        result["stats"]["trip_level_mode_share"] = trip_mode_share
-        result["stats"]["num_trips"] = num_trips
+    # v3.3: one row per trip, so row-level mode share is trip-level
+    if has_trip_ids:
+        result["stats"]["num_trips"] = len(trip_id_set)
+        result["stats"]["dup_trip_ids"] = dup_trip_ids
+        result["stats"]["trip_level_mode_share"] = mode_share
 
     # ── Departure time ordering ──────────────────────────────────────────
     time_violations = 0
@@ -267,6 +278,24 @@ def validate_file(filepath, activity_person_ids=None):
 
     if extreme_distance > 0:
         result["warnings"].append(f"{extreme_distance} trips exceed {MAX_TRIP_DISTANCE_KM}km")
+
+    if mix_mode_rows > 0:
+        result["errors"].append(f"{mix_mode_rows} rows still have MIX (6) as mode; v3.3 requires representative mode")
+
+    if dup_trip_ids > 0:
+        result["errors"].append(f"{dup_trip_ids} duplicate trip_id values")
+
+    if bad_arr_times > 0:
+        result["warnings"].append(f"{bad_arr_times} trips with arr_time out of range")
+
+    if bad_durations > 0:
+        result["errors"].append(f"{bad_durations} trips with negative duration")
+
+    if arr_before_dep > 0:
+        result["errors"].append(f"{arr_before_dep} trips with arr_time < dep_time")
+
+    if bad_v33_fields > 0:
+        result["errors"].append(f"{bad_v33_fields} rows with malformed trip_id/arr_time/duration")
 
     if bad_dep_times > 0:
         result["warnings"].append(f"{bad_dep_times} trips with dep_time out of range")

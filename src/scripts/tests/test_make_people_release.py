@@ -580,7 +580,7 @@ def test_v2_9col_release_has_no_row_content_rule(tmp_path):
 
 def test_refuses_v3_3_rows_labelled_v3_12col(tmp_path):
     p, t = _v33_run(tmp_path)
-    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: subtrip_id '30600' is not 0, 1 or 2"):
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: subtrip_id '30600' is not a leg index 0-9"):
         build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
     assert _no_release(tmp_path)
 
@@ -593,7 +593,7 @@ def test_refuses_v3_12col_rows_labelled_v3_3_12col(tmp_path):
 
 
 @pytest.mark.parametrize("bad, match", [
-    ({10: 3}, r"subtrip_id '3' is not 0, 1 or 2"),
+    ({10: 10}, r"subtrip_id '10' is not a leg index 0-9"),
     ({11: 8}, r"rep_mode '8' is not a transport code 0-7"),
     ({11: 86400}, r"rep_mode '86400' is not a transport code 0-7"),
 ])
@@ -636,3 +636,41 @@ def test_v3_3_gate_refuses_duplicate_trip_id(tmp_path):
         build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
     assert "not v3_3_12col rows" not in str(err.value)  # the layout is right; only the id repeats
     assert _no_release(tmp_path)
+
+
+def test_v3_12col_accepts_web_api_routes_with_five_legs(tmp_path):
+    # TripGenerator_WebAPI_refactor numbers every emitted leg: walk, bus, walk, train, walk = 0-4
+    p, t = make_run(tmp_path, trip_cols=12)
+    legs = [[1, 28800 + 60 * s, 139.7, 35.6, 139.8, 35.7, m, 2, 21, 1, s, 4] for s, m in enumerate([1, 5, 1, 4, 1])]
+    _write_trips(t, "13101", legs + [[2, 28800, 139.7, 35.6, 139.8, 35.7, 1, 2, 21, 1, 0, 1]])
+    rel = build_release(p, t, tmp_path / "releases", NAME, _v3_meta())
+    assert json.loads((rel / "release.json").read_text(encoding="utf-8"))["totals"]["trips"] == 7
+
+
+def test_v3_3_gate_refuses_a_v32_row_whose_trip_id_happens_to_fit(tmp_path):
+    # Codex review: a v3.2 row with trip_id 1001 for pid 1 fits pid*1000+seq; its subtrip_id 0
+    # read as arr_time is before the departure, which a v3.3 row never is.
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[0] = [1, 28800, 139.7, 35.6, 139.8, 35.7, 4, 2, 21, 1001, 0, 4]
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 1: arr_time 0 is before dep_time 28800"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+@pytest.mark.parametrize("col, value", [(10, "oops"), (11, "-1"), (1, "28800.0")])
+def test_v3_3_gate_refuses_malformed_times(tmp_path, col, value):
+    p, t = _v33_run(tmp_path)
+    rows = _v33_rows([1, 2])
+    rows[2][col] = value
+    _write_trips(t, "13101", rows)
+    with pytest.raises(ValueError, match=r"trip_13101.csv line 3: .* is not a plain non-negative integer"):
+        build_release(p, t, tmp_path / "releases", NAME, _v33_meta())
+    assert _no_release(tmp_path)
+
+
+def test_v3_3_stay_home_row_passes(tmp_path):
+    p, t = _v33_run(tmp_path)
+    _write_trips(t, "13102", [[3, 0, 139.7, 35.6, 139.7, 35.6, 0, 1, 21, 3001, 0, 86400]])
+    build_release(p, t, tmp_path / "releases", NAME, _v33_meta())

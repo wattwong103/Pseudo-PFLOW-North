@@ -33,7 +33,8 @@ FORMAT
     trip_<city>.csv    9 columns "v2_9col", or 12 columns "v3_12col" or "v3_3_12col"
                        (pid at index 0); chosen by meta["row_semantics"].
                        "v3_12col" is the v3.2 subtrip layout (... trip_id, subtrip_id,
-                       rep_mode): one row per leg, a mixed trip is 3 rows.
+                       rep_mode): one row per leg, a mixed trip is 3 rows (up to 5
+                       from the Web API variant).
                        "v3_3_12col" is the v3.3 layout (... trip_id, arr_time, duration):
                        one row per logical trip, trip_id = pid * 1000 + seq (seq 1-999).
   Source size and mtime are re-checked after the last copy; a file that changed aborts the release.
@@ -41,9 +42,11 @@ FORMAT
     columns       every non-empty row has the expected number of fields
     pid_coverage  every pid in a city's trip file is a person_id in that city's person file
     row_semantics column count cannot tell the two 12-column layouts apart, so each row is
-                  checked against its label: v3_12col needs subtrip_id in 0-2 and rep_mode a
-                  transport code 0-7; v3_3_12col needs trip_id = pid * 1000 + seq (seq 1-999),
-                  unique in its file. Recorded "n/a" for v2_9col (no content rule).
+                  checked against its label: v3_12col needs subtrip_id in 0-9 and rep_mode a
+                  transport code 0-7; v3_3_12col needs digit-only dep_time, trip_id, arr_time
+                  and duration, trip_id = pid * 1000 + seq (seq 1-999) unique in its file, and
+                  arr_time >= dep_time (a v3.2 subtrip_id read as arr_time fails this).
+                  Recorded "n/a" for v2_9col (no content rule).
   The caller supplies REQUIRED_META (plus optional "anomalies", "updates"); the tool
   computes date, lane, location, columns, totals and gates. Pure stdlib.
   totals = person_files, trip_files, persons, trip_persons, trips. persons is the sum over
@@ -82,7 +85,7 @@ _TRIP_9 = ["pid", "starttime", "slon", "slat", "elon", "elat",
 TRIP_COLUMNS = {"v2_9col": _TRIP_9,
                 "v3_12col": _TRIP_9 + ["trip_id", "subtrip_id", "rep_mode"],
                 "v3_3_12col": _TRIP_9 + ["trip_id", "arr_time", "duration"]}
-SUBTRIP_IDS = {"0", "1", "2"}            # access, main, egress leg of a v3.2 mixed trip
+SUBTRIP_IDS = {str(i) for i in range(10)}  # leg index; TripGenerator writes 0-2, the Web API variant up to 4
 MODE_CODES = {str(i) for i in range(8)}  # pseudo.res.ETransport ids 0-7
 
 REQUIRED_META = ("era", "area", "sample_pct", "row_semantics", "generating_code",
@@ -100,7 +103,10 @@ RENAME_ATTEMPTS = 5
 RENAME_BACKOFF_S = 0.5  # doubles after each failed attempt
 PERSON_PID_INDEX = PERSON_COLUMNS.index("person_id")
 TRIP_PID_INDEX = _TRIP_9.index("pid")
+TRIP_DEP_INDEX = _TRIP_9.index("starttime")
 TRIP_ID_INDEX = len(_TRIP_9)  # trip_id is the 10th column in both 12-column layouts
+V33_INT_FIELDS = (("pid", TRIP_PID_INDEX), ("dep_time", TRIP_DEP_INDEX), ("trip_id", TRIP_ID_INDEX),
+                  ("arr_time", TRIP_ID_INDEX + 1), ("duration", TRIP_ID_INDEX + 2))
 
 
 def validate_name(name: str) -> None:
@@ -179,7 +185,7 @@ def _row_rule(semantics: str):
         def check(row):
             subtrip_id, rep_mode = row[TRIP_ID_INDEX + 1], row[TRIP_ID_INDEX + 2]
             if subtrip_id not in SUBTRIP_IDS:
-                return problem(f"subtrip_id {subtrip_id!r} is not 0, 1 or 2")
+                return problem(f"subtrip_id {subtrip_id!r} is not a leg index 0-9")
             if rep_mode not in MODE_CODES:
                 return problem(f"rep_mode {rep_mode!r} is not a transport code 0-7")
             return None
@@ -188,14 +194,16 @@ def _row_rule(semantics: str):
         seen = set()
 
         def check(row):
-            pid_text, trip_text = row[TRIP_PID_INDEX], row[TRIP_ID_INDEX]
             # digits only: int() would also take "+1001", "1_001" and " 1001 ", which the generator never writes
-            for name, text in (("pid", pid_text), ("trip_id", trip_text)):
-                if not DIGITS_RE.fullmatch(text):
-                    return f"{name} {text!r} is not a plain non-negative integer"
-            pid, trip_id = int(pid_text), int(trip_text)
+            for name, index in V33_INT_FIELDS:
+                if not DIGITS_RE.fullmatch(row[index]):
+                    return f"{name} {row[index]!r} is not a plain non-negative integer"
+            pid, dep, trip_id, arr = (int(row[i]) for i in (TRIP_PID_INDEX, TRIP_DEP_INDEX,
+                                                            TRIP_ID_INDEX, TRIP_ID_INDEX + 1))
             if trip_id // 1000 != pid or trip_id % 1000 == 0:
                 return problem(f"trip_id {trip_id} is not person_id {pid} x 1000 + seq (seq 1-999)")
+            if arr < dep:
+                return problem(f"arr_time {arr} is before dep_time {dep}")
             if trip_id in seen:
                 return f"duplicate trip_id {trip_id} (trip_id must be unique in a file)"
             seen.add(trip_id)

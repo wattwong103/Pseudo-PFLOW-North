@@ -357,14 +357,18 @@ public class PersonAccessor{
             	Trip trip = new Trip(mode, purpose, depTime, new LonLat(lon1,lat1), new LonLat(lon2,lat2));
             	if (items.length >= 12) {
             		long tripId = Long.parseLong(items[9]);
-            		if (tripId / TRIP_SEQ_MODULUS != nextId || tripId % TRIP_SEQ_MODULUS == 0) {
-            			throw new IllegalArgumentException("person " + nextId + " has trip_id " + tripId
-            					+ ", not person_id*1000+seq: this looks like a v3.2 subtrip row (trip_id, subtrip_id,"
+            		long arrTime = Long.parseLong(items[10]);
+            		// A v3.3 row has trip_id = pid*1000+seq and arrives no earlier than it departs;
+            		// a v3.2 row's small trip counter or its subtrip_id (0-4, read as arr_time) breaks one.
+            		if (tripId / TRIP_SEQ_MODULUS != nextId || tripId % TRIP_SEQ_MODULUS == 0 || arrTime < depTime) {
+            			throw new IllegalArgumentException("person " + nextId + " row with trip_id " + tripId
+            					+ ", dep " + depTime + ", arr " + arrTime + " is not a v3.3 row (trip_id = person_id*1000+seq,"
+            					+ " arr_time >= dep_time): this looks like a v3.2 subtrip row (trip_id, subtrip_id,"
             					+ " rep_mode), which loadTrips does not read; it reads v3.3 rows (trip_id, arr_time,"
             					+ " duration) and 9-column rows");
             		}
             		trip.setTripId(tripId);
-            		trip.setArrTime(Long.parseLong(items[10]));
+            		trip.setArrTime(arrTime);
             		trip.setSubtripId(0);
             		trip.setRepMode(mode);
             	} else {

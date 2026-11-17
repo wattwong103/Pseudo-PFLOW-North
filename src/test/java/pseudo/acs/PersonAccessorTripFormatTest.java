@@ -342,4 +342,15 @@ public class PersonAccessorTripFormatTest {
 		PersonAccessor.writeTrips(f.getAbsolutePath(), Arrays.asList(p));
 		assertEquals(Integer.toString(ETransport.TRAIN.getId()), readRows(f).get(0)[6]);
 	}
+
+	@Test
+	public void loadTripsRefusesAV32RowWhoseTripIdHappensToFit() throws Exception {
+		// Codex review: trip_id 1001 fits pid 1 x 1000 + 1, but the v3.2 subtrip_id 0 read as
+		// arr_time is before the departure, which a v3.3 row never is.
+		File f = writeLines("trip-v32-fit", "1,28800,139.7,35.6,139.8,35.7,4" + tail(EPurpose.OFFICE) + ",1001,0,4");
+		RuntimeException e = assertThrows(RuntimeException.class,
+				() -> PersonAccessor.loadTrips(f.getAbsolutePath()));
+		String msg = e.getMessage() + " / " + (e.getCause() == null ? "" : e.getCause().getMessage());
+		assertTrue(msg.contains("v3.2"), msg);
+	}
 }

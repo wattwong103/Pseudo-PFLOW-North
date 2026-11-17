@@ -888,10 +888,11 @@ public class TripGenerator_WebAPI_refactor {
 									repMode = Trip.computeRepMode(repMode, t.getTransport());
 								}
 								if (!mixedTrips.isEmpty()) {
-									Trip lastLeg = mixedTrips.get(mixedTrips.size() - 1);
-									long mixedDep = mixedTrips.get(0).getDepTime();
-									long mixedTravel = mixedResultsHolder[0].path("total_time").asLong() * 60;
-									lastLeg.setArrTime(mixedDep + mixedTravel);
+									// Arrival is the next activity's start, as in the walk/car branch above.
+									// Not first-leg dep + total_time: processMixedTransportFeatures advances
+									// each leg's dep by its own travel time first (pre-existing), which would
+									// push the arrival past the activity start.
+									mixedTrips.get(mixedTrips.size() - 1).setArrTime(next.getStartTime());
 								}
 								for (Trip t : mixedTrips) {
 									t.setRepMode(repMode);

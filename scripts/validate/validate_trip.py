@@ -115,6 +115,7 @@ def validate_file(filepath, activity_person_ids=None):
     bad_arr_times = 0
     bad_durations = 0
     arr_before_dep = 0
+    bad_v33_fields = 0
 
     for row in rows:
         try:
@@ -152,7 +153,7 @@ def validate_file(filepath, activity_person_ids=None):
                 if arr_time < dep_time:
                     arr_before_dep += 1
             except (ValueError, IndexError):
-                pass
+                bad_v33_fields += 1
 
         if transport == 0:
             if dist < ZERO_DISTANCE_THRESHOLD_KM:
@@ -292,6 +293,9 @@ def validate_file(filepath, activity_person_ids=None):
 
     if arr_before_dep > 0:
         result["errors"].append(f"{arr_before_dep} trips with arr_time < dep_time")
+
+    if bad_v33_fields > 0:
+        result["errors"].append(f"{bad_v33_fields} rows with malformed trip_id/arr_time/duration")
 
     if bad_dep_times > 0:
         result["warnings"].append(f"{bad_dep_times} trips with dep_time out of range")

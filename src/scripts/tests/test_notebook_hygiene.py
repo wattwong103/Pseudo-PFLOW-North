@@ -10,7 +10,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Patterns that must never appear as literal credentials or internal server IPs in notebooks.
+# Patterns that must never appear as literal credentials, internal server IPs/mounts,
+# or confidential/commercial dataset paths in notebooks.
 FORBIDDEN_NOTEBOOK_PATTERNS = [
     re.compile(
         r"""['"]?(?:password|passwd|userid|api[_-]?key|secret|webapisessionid)['"]?\s*[:=]\s*['"][^'"]+['"]""",
@@ -18,6 +19,8 @@ FORBIDDEN_NOTEBOOK_PATTERNS = [
     ),
     re.compile(r"\b157\.82\.\d+\.\d+\b"),
     re.compile(r"(?:/Users/|C:\\\\Users\\\\|/home/(?:mdxuser|owner|ubuntu)/)"),
+    re.compile(r"(?:/mnt/(?:large|free)/|C:/+large/|00_PTData|秘匿|納品物|Konzatsu|Suma_filtere)"),
+    re.compile(r"(?:Softbank/|21015_(?:toyama|shizuoka)_od_meshod)", re.IGNORECASE),
 ]
 
 # Non-placeholder api.password / api.userID assignments or internal IPs in docs/configs/code.

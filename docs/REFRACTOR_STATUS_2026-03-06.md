@@ -68,7 +68,7 @@ d14ab2d  2026-03-03  build: pin GeoTools to stable 26.5, fix java.version, upgra
 | `ls src/main/resources/log4j2.xml` | **存在** |
 | `grep "sourceDirectory" pom.xml` | **`<sourceDirectory>src</sourceDirectory>`（第 132 行）** |
 | `grep "pflowlib" pom.xml` | 仅注释行（`<!-- pflowlib source dependencies... -->`），无 JAR 依赖声明 |
-| `grep "api\." config.properties` | `api.userID=${PFLOW_API_USER}`，`api.password=${PFLOW_API_PASS}`（无明文） |
+| `grep "api\." config.properties` | `api.userID=${PFLOW_API_USER}`，`api.password=<REDACTED>`（无明文） |
 | `[ -e src/sim/sim3 ]` | **GONE** |
 | `[ -e src/pseudo/gen/RoadRouteTest.java ]` | **GONE** |
 | `[ -e src/pseudo/gen/TransportTest.java ]` | **GONE** |
@@ -82,7 +82,7 @@ d14ab2d  2026-03-03  build: pin GeoTools to stable 26.5, fix java.version, upgra
 ### 残留问题（需后续处理）
 1. **`.idea/libraries/pflowlib.xml`** 在 master 合并后重新出现（master 分支历史中含此文件）。该文件让 IntelliJ 仍将 `lib/pflowlib.jar` 列为 library，但 Maven 构建**不受影响**。建议删除并提交。
 2. **`src/particle/`** 目录仍存在（空目录，无 `.java` 文件）。可随时清理。
-3. **Git 历史含明文凭证**：`api.password=Pyb-37167209` 存在于旧 commit 中（本次仅清理工作区，未做历史重写）。若仓库为私有可暂缓；若为公开仓库，建议用 `git filter-repo` / BFG 做一次历史清洗，并轮换 API 密码。
+3. **Git 历史含明文凭证**：`api.password=<REDACTED>` 存在于旧 commit 中（本次仅清理工作区，未做历史重写）。若仓库为私有可暂缓；若为公开仓库，建议用 `git filter-repo` / BFG 做一次历史清洗，并轮换 API 密码。
 
 ### 其它机器上的分支
 - 其它服务器/机器上可能存在尚未推送至 GitHub 的本地分支（如 `hms-server2` 的服务器本地变体）。

@@ -86,7 +86,7 @@ Generally, we use the following metrics for the evaluation and visualization:
 - Be sure to commit your change of codes regularly.
 - Keep your commit message clear and understandable.
 - Log your revised or new features in CHANGELOG.md with the correct format.
-- Save the simulated files and upload them to S3 ([s3://pseudo-pflow/ver2.0/dev/](s3://pseudo-pflow/ver2.0/dev/)) with the name of the experiment.
+- Save the simulated files and archive them under your experiment output storage (`<ARCHIVE_BUCKET>/ver2.0/dev/<experiment>`).
 
 ---
 

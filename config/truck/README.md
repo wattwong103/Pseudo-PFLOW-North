@@ -37,7 +37,7 @@ Origin-destination matrices. CSV format: rows=origin zones, columns=destination 
 ### facilities/
 Point-of-Interest data for destination selection within zones.
 
-- `logistics_*.csv` — Telepoint-sourced logistics POIs (Kanto only)
+- `logistics*.csv` — Curated regional logistics facility POIs (Kanto + expansion zones)
 - `census_*.csv` — Economic Census-derived POIs (nationwide, 160K+ points)
 - `industrial_sites.csv`, `port_terminals.csv`, `retail_shops.csv`, `shopping_malls.csv`
 

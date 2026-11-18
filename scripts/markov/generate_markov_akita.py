@@ -229,10 +229,16 @@ def write_markov_csv(probs, output_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--raw', default='/mnt/large/data/00_PTData/17_秋田H17/10_rawdata/提供資料/秋期PT/秋期PT_34,391レコード.txt')
+    ap.add_argument(
+        '--raw',
+        default=(os.environ.get('PFLOW_PT_RAW_AKITA') or '').strip() or None,
+        help='Path to Akita PT raw master file (or set PFLOW_PT_RAW_AKITA)',
+    )
     ap.add_argument('--output-dir', default='/tmp/markov_v2_raw')
     ap.add_argument('--sample', type=int, default=None)
     args = ap.parse_args()
+    if not args.raw or not args.raw.strip():
+        ap.error('--raw or PFLOW_PT_RAW_AKITA environment variable is required')
 
     persons = defaultdict(list)
     person_meta = {}

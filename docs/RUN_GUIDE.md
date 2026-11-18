@@ -9,7 +9,7 @@ For Windows-specific deployment instructions, see [ENGINEERING_HANDOFF.md](ENGIN
 - **Java**: 11+ (tested with Temurin 21)
 - **Maven**: 3.6.3 exactly (3.8+ incompatible)
 - **Python**: 3.8+ (for validation scripts; no extra packages needed)
-- **Dataset**: Download from `S3://pseudo-pflow/processing`
+- **Dataset**: Provisioned processing dataset archive (not bundled in this repository)
 - **WebAPI credentials**: Set `PFLOW_API_USER` and `PFLOW_API_PASS` as environment variables
 
 ### Credentials setup

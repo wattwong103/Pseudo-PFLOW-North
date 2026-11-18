@@ -412,7 +412,7 @@ public class ZoneLoader {
                 poiManager.loadCensusPOIs("config/truck/facilities/");
             }
 
-            // Link POIs to zones (includes both Telepoint + census POIs)
+            // Link POIs to zones (includes both curated facility + census POIs)
             for (DeliveryZone zone : deliveryZones) {
                 List<PointOfInterest> zonePOIs = poiManager.getPOIsInZone(zone.getZoneId());
                 zone.setPOIs(zonePOIs);

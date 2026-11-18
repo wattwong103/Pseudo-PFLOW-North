@@ -61,7 +61,7 @@ python --version
 
 ### Dataset
 
-Download the processing dataset from `S3://pseudo-pflow/processing` and extract to `C:\Pseudo-PFLOW\data\`.
+Obtain the provisioned processing dataset archive (distributed separately under institutional data terms) and extract to `C:\Pseudo-PFLOW\data\`.
 
 Expected structure:
 ```

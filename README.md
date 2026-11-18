@@ -7,7 +7,7 @@ Pseudo-PFLOW generates synthetic population flow data for Japan — a full pipel
 - **Java**: 11+ (tested with Eclipse Temurin 21)
 - **Maven**: 3.6.3 exactly (versions 3.8+ are incompatible)
 - **Python**: 3.8+ (for validation scripts only; no extra packages needed)
-- **Dataset**: Download from `S3://pseudo-pflow/processing`
+- **Dataset**: Provisioned processing dataset archive (not bundled in this repository; configure `root` / `inputDir` in `config.local.properties`)
 
 ### pflowlib sources
 

@@ -223,11 +223,17 @@ def build_schedule(trips):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--raw', default='/mnt/large/data/00_PTData/03_KyushuH17/rawdata/H17MSTR-070405.txt')
+    ap.add_argument(
+        '--raw',
+        default=(os.environ.get('PFLOW_PT_RAW_KYUSHU') or '').strip() or None,
+        help='Path to Kyushu PT raw master file (or set PFLOW_PT_RAW_KYUSHU)',
+    )
     ap.add_argument('--output-dir', default='/tmp/markov_v2')
     ap.add_argument('--sample', type=int, default=None,
                     help='Process only N records (for testing)')
     args = ap.parse_args()
+    if not args.raw or not args.raw.strip():
+        ap.error('--raw or PFLOW_PT_RAW_KYUSHU environment variable is required')
 
     # Group records by person (uid)
     persons = defaultdict(list)          # uid -> list of trip records
